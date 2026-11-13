@@ -11,3 +11,6 @@ web/dist
 web/patch-*.mjs
 web/tools/patch-*.mjs
 web/reports
+
+# Local isolated implementation workspaces
+.worktrees/
