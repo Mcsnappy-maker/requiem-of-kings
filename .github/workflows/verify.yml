@@ -15,11 +15,24 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: |
+            multiplayer/package-lock.json
             web/package-lock.json
             server/package-lock.json
+
+      - name: Install durable multiplayer dependencies
+        run: npm ci --prefix multiplayer
+
+      - name: Test durable multiplayer in the Worker runtime
+        run: npm test --prefix multiplayer
+
+      - name: Typecheck durable multiplayer
+        run: npm run typecheck --prefix multiplayer
+
+      - name: Validate Worker deployment bundle without deploying
+        run: npx --prefix multiplayer wrangler deploy --dry-run --config multiplayer/wrangler.jsonc --env=""
 
       - name: Install web dependencies
         run: npm ci --prefix web
@@ -37,5 +50,5 @@ jobs:
       - name: Build web application
         run: npm run build --prefix web
 
-      - name: Run multiplayer end-to-end checks
+      - name: Run legacy relay end-to-end checks
         run: node server/e2e-multiplayer.mjs

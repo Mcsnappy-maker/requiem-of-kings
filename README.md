@@ -5,8 +5,9 @@ A cinematic 3D chess game in the browser. Two rival civilisations — a medieval
 characters that glide, strike, scream and burn away into dust on a marble-and-basalt board.
 
 Built with **Vite + React 19 + TypeScript + three.js**, [chess.js](https://github.com/jhlywa/chess.js)
-for the rules, and a **Web Worker** search engine for the computer opponent. No backend, no
-account, no build-time asset pipeline — it is a static site.
+for the rules, and a **Web Worker** search engine for the computer opponent. Local and AI
+games run as a static site without an account. Private online matches use a separate
+Cloudflare Worker with durable storage.
 
 ```bash
 cd web && bun install && bun run dev
@@ -79,20 +80,33 @@ cd web && bun install && bun run dev
 
 ## Quick start
 
-Requires **Node 20+**. [Bun](https://bun.sh) is recommended; npm/pnpm work too.
+The web app supports **Node 20+**; the multiplayer Worker and full verification require
+**Node 22.12+**. [Bun](https://bun.sh) is recommended for the web app; npm/pnpm work too.
 
 ```bash
 git clone <your-fork-url>
 cd <repo>/web
 
 bun install
-bun run dev        # http://localhost:5173
+bun run dev        # http://localhost:8080
 bun run build      # production bundle in web/dist/
 bun run preview    # serve the built bundle
 ```
 
 The build output in `web/dist/` is a plain static site — drop it on GitHub Pages, Netlify,
-Cloudflare Pages or any static host. No environment variables are required to run the game.
+Cloudflare Pages or any static host. No environment variables are required for local or AI
+games. Online Duel requires `VITE_MULTIPLAYER_HTTP_URL`, `VITE_MULTIPLAYER_WS_URL` and an
+allowed web origin on the Worker. See the [durable multiplayer setup and deployment guide](docs/deploy/CLOUDFLARE_MULTIPLAYER.md).
+
+Stage 1 online matches are untimed: create a private opponent invite, save each player's
+separate return link, and resume the same board and move ledger after closing the browsers.
+An invite can be claimed once; opening a return link on another device replaces the prior
+connection for that seat. Anyone holding a return link controls that seat. Online clocks,
+resignation, rematches, expiry and token rotation are outside Stage 1.
+
+CI verifies the Worker runtime, durable restart/resume/replay/takeover scenario, web tests
+and build, and the legacy relay E2E. Hosted deployment and the PC/phone cross-network gate
+remain **BLOCKED pending owner-controlled Cloudflare and Vercel accounts**; tests do not deploy.
 
 ## Controls
 
@@ -122,6 +136,7 @@ Keyboard shortcuts (ignored while typing in a field):
 | --- | --- |
 | **Player vs Computer** | Pick your colour, an engine strength and an optional clock |
 | **Two players** | Hotseat on one screen; the camera swings round between turns (switchable) |
+| **Online Duel** | Untimed durable match using a one-time opponent invite and private return links |
 | **Showcase** | Two engines duel on their own — per-side strength, 0.5×–4× pace, auto-rematch |
 | **Attract** | Leave the menu alone for 30 seconds and a showcase duel starts behind it |
 

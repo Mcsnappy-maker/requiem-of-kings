@@ -11,10 +11,36 @@ the rules and a Web Worker search engine for the computer opponent.
 
 ```bash
 bun install   # or npm install
-bun run dev   # or npm run dev  → http://localhost:5173
+bun run dev   # or npm run dev  → http://localhost:8080
 bun run build # production bundle in dist/
 bun run preview
 ```
+
+Local/AI modes need no service configuration. For Online Duel, run the Cloudflare Worker
+from the repository root with `npm run dev --prefix multiplayer` (Node 22.12+), then start
+the web app with these build-time variables in PowerShell from this `web/` directory:
+
+```powershell
+$env:VITE_MULTIPLAYER_HTTP_URL = "http://localhost:8787"
+$env:VITE_MULTIPLAYER_WS_URL = "ws://localhost:8787"
+npm run dev
+```
+
+The development Worker permits exactly `http://localhost:8080` and
+`http://127.0.0.1:8080`. Use port 8080; a fallback Vite port needs an explicit allowlist
+change. Production uses the Worker HTTPS/WSS origins in the same two variables, configured
+on Vercel before building. These are public service URLs, never seat tokens. The legacy
+`/ws` dev proxy and `VITE_MULTIPLAYER_URL` do not configure the durable client.
+
+Online Duel is untimed. Share **Copy opponent invite** with the opponent; each player must
+save their own private return link before leaving. The guest uses **Save my return link**
+after claiming the one-time invite. Reopen the saved return link to resume; doing so on
+another device replaces the existing connection for that seat. Never share a return link
+or include its fragment in logs, screenshots or bug reports.
+
+See [Cloudflare multiplayer deployment and verification](../docs/deploy/CLOUDFLARE_MULTIPLAYER.md)
+for fresh-install checks, Vercel configuration, smoke tests and rollback. Deployment and
+the manual cross-device gate remain blocked until owner-controlled accounts are available.
 
 ## Controls
 

@@ -19,3 +19,7 @@ web/reports
 .wrangler/
 multiplayer/coverage/
 multiplayer/dist/
+
+# Generated browser-test evidence
+web/.vitest-attachments/
+web/src/test/__screenshots__/
