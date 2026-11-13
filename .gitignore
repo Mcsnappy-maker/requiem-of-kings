@@ -14,3 +14,8 @@ web/reports
 
 # Local isolated implementation workspaces
 .worktrees/
+
+# Cloudflare local state and generated multiplayer output
+.wrangler/
+multiplayer/coverage/
+multiplayer/dist/
