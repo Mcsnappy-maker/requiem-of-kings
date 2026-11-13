@@ -1,38 +1,116 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Copy, Check, Globe, Loader2, LogIn, Swords, X } from "lucide-react";
-
+import { Copy, Globe, Loader2, X } from "lucide-react";
 import type { Faction } from "../core/types";
-import { OnlineClient, relayAvailable, type ConnectionStatus } from "../net/onlineClient";
-import { isValidRoomCode, normaliseRoomCode, type SeatPreference } from "../net/protocol";
+import {
+  OnlineClient,
+  relayAvailable,
+  type ConnectionStatus,
+  type HostedMatch,
+} from "../net/onlineClient";
+import { clearPrivateFragment, readPrivateIntent } from "../net/privateLink";
+import type { SeatPreference } from "../net/protocol";
 import { Crest } from "./Heraldry";
 
 export interface OnlineSession {
   client: OnlineClient;
-  code: string;
+  matchId: string;
   color: Faction;
 }
-
 interface OnlineLobbyProps {
-  /** Fires once a seat is confirmed by the relay. */
   onSeated: (session: OnlineSession) => void;
   onClose: () => void;
 }
 
-const CLOCKS: { label: string; value: number | null }[] = [
-  { label: "None", value: null },
-  { label: "5 min", value: 5 },
-  { label: "10 min", value: 10 },
-  { label: "15 min", value: 15 },
-];
+export function onlineFailureCopy(code: string): string {
+  switch (code) {
+    case "seat-replaced":
+      return "This seat opened on another device";
+    case "join-consumed":
+      return "This invite has expired or already been used. Ask your opponent for a new invite.";
+    case "match-expired":
+    case "no-match":
+      return "This room has expired. Create a new duel.";
+    case "bad-token":
+    case "bad-message":
+    case "private-link-required":
+      return "This private link is invalid. Check that you opened the complete link.";
+    case "bad-version":
+      return "This client is incompatible. Update the game and reopen your private link.";
+    case "configuration":
+      return "Online play is unavailable in this build.";
+    default:
+      return "Could not connect to this duel. Try reopening your private return link.";
+  }
+}
 
-const STATUS_COPY: Record<ConnectionStatus, string> = {
-  idle: "",
-  connecting: "Sending a rider to the relay...",
-  connected: "Connected",
-  reconnecting: "The line went quiet - riding back...",
-  closed: "Disconnected",
-  error: "The relay refused the request",
-};
+export function PrivateLinkActions({
+  returnLink,
+  joinLink,
+  guest = false,
+}: {
+  returnLink: string | null;
+  joinLink?: string;
+  guest?: boolean;
+}) {
+  const [copied, setCopied] = useState(false);
+  const [fallback, setFallback] = useState<string | null>(null);
+  const copy = async (link: string) => {
+    setCopied(false);
+    setFallback(null);
+    try {
+      await navigator.clipboard.writeText(link);
+      setCopied(true);
+    } catch {
+      setFallback(link);
+    }
+  };
+  return (
+    <div className="space-y-3">
+      {joinLink ? (
+        <button
+          type="button"
+          className="mc-btn flex w-full items-center justify-center gap-2 py-3"
+          onClick={() => void copy(joinLink)}
+        >
+          <Copy size={15} />
+          Copy opponent invite
+        </button>
+      ) : null}
+      {returnLink ? (
+        <button
+          type="button"
+          className="mc-btn flex w-full items-center justify-center gap-2 py-3"
+          onClick={() => void copy(returnLink)}
+        >
+          <Copy size={15} />
+          {guest ? "Save my return link" : "Copy my return link"}
+        </button>
+      ) : null}
+      <p className="text-xs leading-relaxed text-[#d9c489]">
+        Anyone with your private return link controls your seat. Keep it private
+        and save it to return on another device. Share only the opponent invite.
+      </p>
+      {copied ? (
+        <p role="status" className="text-xs text-[#b7a88a]">
+          Link copied
+        </p>
+      ) : null}
+      {fallback ? (
+        <label className="block text-xs text-[#d9c489]">
+          Clipboard unavailable. Select and copy this link.
+          <textarea
+            aria-label="Private link to copy"
+            className="mc-input mt-2 w-full select-text px-3 py-2"
+            readOnly
+            value={fallback}
+            onFocus={(event) => event.currentTarget.select()}
+            onClick={(event) => event.currentTarget.select()}
+          />
+        </label>
+      ) : null}
+    </div>
+  );
+}
 
 function readStoredName(): string {
   try {
@@ -42,316 +120,275 @@ function readStoredName(): string {
   }
 }
 
-function readInviteCode(): string {
-  try {
-    const raw = new URLSearchParams(window.location.search).get("room");
-    if (!raw) return "";
-    const clean = normaliseRoomCode(raw);
-    return isValidRoomCode(clean) ? clean : "";
-  } catch {
-    return "";
-  }
-}
-
 export function OnlineLobby({ onSeated, onClose }: OnlineLobbyProps) {
-  const invite = useMemo(readInviteCode, []);
-  const [tab, setTab] = useState<"host" | "join">(invite ? "join" : "host");
+  const intent = useMemo(() => readPrivateIntent(window.location), []);
+  const [tab, setTab] = useState<"host" | "join">(intent ? "join" : "host");
   const [name, setName] = useState(readStoredName);
   const [seat, setSeat] = useState<SeatPreference>("random");
-  const [clock, setClock] = useState<number | null>(10);
-  const [code, setCode] = useState(invite);
   const [status, setStatus] = useState<ConnectionStatus>("idle");
-  const [detail, setDetail] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [hosted, setHosted] = useState<{ code: string; color: Faction } | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [fatal, setFatal] = useState<string | null>(() =>
+    window.location.hash && !intent ? onlineFailureCopy("bad-token") : null,
+  );
+  const [hosted, setHosted] = useState<HostedMatch | null>(null);
+  const [confirmed, setConfirmed] = useState<OnlineSession | null>(null);
   const [busy, setBusy] = useState(false);
+  const [client] = useState(() => new OnlineClient());
+  // The lobby owns this connection until Enter duel transfers it to the shell.
+  const transferred = useRef(false);
+  const mounted = useRef(true);
+  const noService = !relayAvailable();
 
-  const client = useMemo(() => new OnlineClient(), []);
-  /** Static deployments (GitHub Pages) ship no relay - warn before a click. */
-  const noRelay = useMemo(() => !relayAvailable(), []);
-  const seatedRef = useRef(false);
-  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // The lobby owns the client only until a seat is confirmed; after that the
-  // shell takes it over. Disposing here would kill a live game, so the guard
-  // is a ref rather than state.
   useEffect(() => {
-    const offStatus = client.on("status", (payload) => {
-      setStatus(payload.status);
-      setDetail(payload.detail);
-      if (payload.status === "connected") setError(null);
-    });
-
-    const offSeated = client.on("seated", ({ code: roomCode, color }) => {
-      setHosted({ code: roomCode, color });
+    mounted.current = true;
+    const offStatus = client.on("status", ({ status }) => setStatus(status));
+    const offSeated = client.on("seated", ({ matchId, color }) => {
+      setConfirmed({ client, matchId, color });
       setBusy(false);
       setError(null);
-      // A hosted room waits in the lobby so the code can be read and shared;
-      // a joiner goes straight to the board.
-      const state = client.getSeat();
-      if (state && tabRef.current === "join") {
-        seatedRef.current = true;
-        onSeated({ client, code: roomCode, color });
-      }
     });
-
-    const offFailed = client.on("failed", ({ message }) => {
-      setError(message);
+    const offFailed = client.on("failed", ({ code, fatal }) => {
       setBusy(false);
+      if (fatal) setFatal(onlineFailureCopy(code));
+      else setError("Could not connect. Please try again.");
     });
-
+    if (intent?.kind === "seat") {
+      setBusy(true);
+      if (!client.resume(intent)) {
+        setBusy(false);
+        setFatal((failure) => failure ?? onlineFailureCopy("bad-token"));
+      }
+    }
     return () => {
+      mounted.current = false;
       offStatus();
       offSeated();
       offFailed();
-      if (copyTimer.current) clearTimeout(copyTimer.current);
-      if (!seatedRef.current) client.dispose();
+      if (!transferred.current) client.dispose();
     };
-  }, [client, onSeated]);
+  }, [client, intent]);
 
-  // The seated handler needs the CURRENT tab without re-subscribing each render.
-  const tabRef = useRef(tab);
-  useEffect(() => {
-    tabRef.current = tab;
-  }, [tab]);
-
-  // Once a hosted room has a second player the relay sends state; the host
-  // enters the board when it sees two players seated.
-  useEffect(() => {
-    if (!hosted) return;
-    const off = client.on("state", (state) => {
-      if (state.players.length < 2 || seatedRef.current) return;
-      seatedRef.current = true;
-      onSeated({ client, code: hosted.code, color: hosted.color });
-    });
-    return off;
-  }, [client, hosted, onSeated]);
-
-  const persistName = useCallback((value: string) => {
-    setName(value);
+  const close = useCallback(() => {
+    clearPrivateFragment(window.history, window.location);
+    client.dispose();
+    onClose();
+  }, [client, onClose]);
+  const host = async () => {
+    setBusy(true);
+    setError(null);
     try {
-      localStorage.setItem("kg.online.name", value);
+      const match = await client.host(name.trim() || "Challenger", seat);
+      if (mounted.current) {
+        setHosted(match);
+        setBusy(false);
+      }
     } catch {
-      /* private mode */
+      if (mounted.current) {
+        setBusy(false);
+        setError("Could not create a duel. Please try again.");
+      }
     }
-  }, []);
-
-  const host = useCallback(() => {
-    setError(null);
+  };
+  const join = () => {
+    if (intent?.kind !== "join") return;
     setBusy(true);
-    client.host(name.trim() || "Challenger", seat, clock);
-  }, [client, name, seat, clock]);
-
-  const join = useCallback(() => {
-    const clean = normaliseRoomCode(code);
-    if (!isValidRoomCode(clean)) {
-      setError("A hall code is five letters and numbers.");
-      return;
+    setError(null);
+    client.claim(intent, name.trim() || "Challenger");
+  };
+  const enter = () => {
+    if (confirmed) {
+      transferred.current = true;
+      onSeated(confirmed);
     }
-    setError(null);
-    setBusy(true);
-    client.join(name.trim() || "Challenger", clean);
-  }, [client, name, code]);
-
-  const copyCode = useCallback(() => {
-    if (!hosted) return;
-    const share = `${window.location.origin}${window.location.pathname}?room=${hosted.code}`;
-    void navigator.clipboard
-      ?.writeText(share)
-      .then(() => {
-        setCopied(true);
-        if (copyTimer.current) clearTimeout(copyTimer.current);
-        copyTimer.current = setTimeout(() => setCopied(false), 2000);
-      })
-      .catch(() => setError("Could not reach the clipboard - copy the code by hand."));
-  }, [hosted]);
-
-  const connecting = status === "connecting" || status === "reconnecting";
-
+  };
   return (
     <div className="mc-menu pointer-events-auto absolute inset-0 z-30 flex flex-col items-center justify-center overflow-hidden px-5 py-6">
-      <div className="mc-slate mc-goldleaf mc-rise flex max-h-full w-full min-h-0 max-w-md flex-col p-5 sm:p-6">
-        <div className="mb-4 flex shrink-0 items-center justify-between">
+      <div className="mc-slate mc-goldleaf mc-rise flex max-h-full w-full min-h-0 max-w-md flex-col overflow-y-auto p-5 sm:p-6">
+        <div className="mb-4 flex items-center justify-between">
           <h2 className="mc-display flex items-center gap-2 text-sm tracking-[0.28em] text-[#f0dfb6]">
             <Globe size={15} /> ONLINE DUEL
           </h2>
-          <button type="button" className="mc-chip px-2 py-1.5" onClick={onClose} aria-label="Close">
+          <button
+            type="button"
+            className="mc-chip px-2 py-1.5"
+            onClick={close}
+            aria-label="Close"
+          >
             <X size={14} />
           </button>
         </div>
-        {noRelay ? (
-          <p className="mb-3 shrink-0 rounded border border-[#8a6d3b]/40 bg-[#3a2d18]/40 px-3 py-2 text-xs leading-relaxed text-[#d9c489]">
-            This hosted build has no relay server, so online duels cannot connect here.
-            Computer and 2 Players work fully. For online play, run the game locally with
-            its relay (see the repository README).
-          </p>
-        ) : null}
-
-        {hosted ? (
-          <div className="mc-fade space-y-5">
-            <div className="text-center">
-              <p className="mc-display mb-2 text-[0.62rem] tracking-[0.3em] text-[#a89268]">
-                YOUR HALL CODE
-              </p>
-              <p className="mc-display mc-title-glow text-5xl tracking-[0.35em] text-[#f4e3bd]">
-                {hosted.code}
-              </p>
-              <div className="mc-rule mx-auto mt-3 w-40" />
-            </div>
-
+        {fatal ? (
+          <div className="space-y-4">
+            <p role="alert" className="text-sm text-[#d98a6a]">
+              {fatal}
+            </p>
             <button
               type="button"
-              className="mc-btn flex w-full items-center justify-center gap-2 py-3"
-              onClick={copyCode}
+              className="mc-btn w-full py-3"
+              onClick={close}
             >
-              {copied ? <Check size={15} /> : <Copy size={15} />}
-              {copied ? "Link copied" : "Copy invite link"}
+              Back to main menu
             </button>
-
-            <div className="flex items-center justify-center gap-2 text-sm text-[#b7a88a]">
-              <Crest faction={hosted.color} size={18} active />
-              You command the {hosted.color === "w" ? "Ivory" : "Obsidian"} army
-            </div>
-
-            <div className="flex items-center justify-center gap-2 text-xs italic text-[#9c8b6c]">
-              <Loader2 size={13} className="animate-spin" />
-              Awaiting your opponent...
-            </div>
           </div>
         ) : (
           <>
-            <div className="mb-5 grid shrink-0 grid-cols-2 gap-2">
-              <button
-                type="button"
-                className="mc-chip flex items-center justify-center gap-1.5 px-1 py-3"
-                data-active={tab === "host"}
-                onClick={() => setTab("host")}
-              >
-                <Swords size={14} /> Host
-              </button>
-              <button
-                type="button"
-                className="mc-chip flex items-center justify-center gap-1.5 px-1 py-3"
-                data-active={tab === "join"}
-                onClick={() => setTab("join")}
-              >
-                <LogIn size={14} /> Join
-              </button>
-            </div>
-
-            <div className="mc-scroll -mr-2 min-h-0 flex-auto space-y-5 overflow-y-auto pr-2">
-              <div>
-                <p className="mc-display mb-2 text-[0.62rem] tracking-[0.3em] text-[#a89268]">
-                  Your name
+            {noService ? (
+              <p className="mb-3 text-xs text-[#d9c489]">
+                Online play is unavailable in this build. Computer and 2 Players
+                are available from the main menu.
+              </p>
+            ) : null}
+            <p className="mb-4 text-sm text-[#b7a88a]">Untimed</p>
+            {hosted || confirmed ? (
+              <div className="space-y-4">
+                <p className="mc-display text-xs text-[#a89268]">
+                  HALL {hosted?.matchId ?? confirmed?.matchId}
                 </p>
-                <input
-                  className="mc-input w-full px-3 py-2.5 text-sm"
-                  value={name}
-                  maxLength={20}
-                  placeholder="Challenger"
-                  onChange={(event) => persistName(event.target.value)}
+                <PrivateLinkActions
+                  joinLink={hosted?.joinLink}
+                  returnLink={client.getReturnLink()}
+                  guest={intent?.kind === "join"}
                 />
-              </div>
-
-              {tab === "host" ? (
-                <div className="mc-fade space-y-5">
-                  <div>
-                    <p className="mc-display mb-2 text-[0.62rem] tracking-[0.3em] text-[#a89268]">
-                      Your banner
+                {confirmed ? (
+                  <>
+                    <p className="flex items-center gap-2 text-sm text-[#b7a88a]">
+                      <Crest faction={confirmed.color} size={18} active />
+                      You command the{" "}
+                      {confirmed.color === "w" ? "Ivory" : "Obsidian"} army
                     </p>
-                    <div className="grid grid-cols-3 gap-2">
-                      {(["w", "b", "random"] as SeatPreference[]).map((option) => (
-                        <button
-                          key={option}
-                          type="button"
-                          className="mc-chip flex items-center justify-center gap-1.5 py-2.5"
-                          data-active={seat === option}
-                          onClick={() => setSeat(option)}
-                        >
-                          {option !== "random" ? (
-                            <Crest faction={option} size={16} active={seat === option} />
-                          ) : null}
-                          {option === "w" ? "Ivory" : option === "b" ? "Obsidian" : "Random"}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div>
-                    <p className="mc-display mb-2 text-[0.62rem] tracking-[0.3em] text-[#a89268]">
-                      Hourglass
-                    </p>
-                    <div className="grid grid-cols-4 gap-2">
-                      {CLOCKS.map((option) => (
-                        <button
-                          key={option.label}
-                          type="button"
-                          className="mc-chip py-2.5"
-                          data-active={clock === option.value}
-                          onClick={() => setClock(option.value)}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="mc-fade space-y-3">
-                  <p className="mc-display mb-2 text-[0.62rem] tracking-[0.3em] text-[#a89268]">
-                    Hall code
-                  </p>
-                  <input
-                    className="mc-input mc-display w-full px-3 py-3 text-center text-2xl tracking-[0.4em]"
-                    value={code}
-                    maxLength={5}
-                    placeholder="ABCDE"
-                    autoCapitalize="characters"
-                    autoCorrect="off"
-                    spellCheck={false}
-                    onChange={(event) => setCode(normaliseRoomCode(event.target.value))}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") join();
-                    }}
-                  />
+                    <button
+                      type="button"
+                      className="mc-btn mc-btn-primary w-full py-3"
+                      onClick={enter}
+                    >
+                      Enter duel
+                    </button>
+                  </>
+                ) : null}
+                {hosted ? (
                   <p className="text-xs italic text-[#9c8b6c]">
-                    Ask your opponent for the five-character code from their hall.
+                    Your opponent can join using the invite. You can enter the
+                    board while you wait.
                   </p>
-                </div>
-              )}
-            </div>
-
-            <div className="mc-panel-foot shrink-0">
-              {error ? (
-                <p className="mt-4 text-center text-xs text-[#d98a6a]">{error}</p>
-              ) : connecting ? (
-                <p className="mt-4 text-center text-xs italic text-[#9c8b6c]">
-                  {detail ?? STATUS_COPY[status]}
-                </p>
-              ) : null}
-
-              <button
-                type="button"
-                className="mc-btn mc-btn-primary mt-4 flex w-full items-center justify-center gap-2 py-3.5 text-sm disabled:opacity-50"
-                disabled={busy || (tab === "join" && !isValidRoomCode(code))}
-                onClick={tab === "host" ? host : join}
-              >
-                {busy ? (
-                  <>
-                    <Loader2 size={16} className="animate-spin" /> Opening the hall...
-                  </>
-                ) : tab === "host" ? (
-                  <>
-                    <Swords size={16} /> Open a hall
-                  </>
+                ) : null}
+              </div>
+            ) : (
+              <>
+                {!intent ? (
+                  <div className="mb-5 grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      className="mc-chip py-3"
+                      data-active={tab === "host"}
+                      onClick={() => setTab("host")}
+                    >
+                      Host
+                    </button>
+                    <button
+                      type="button"
+                      className="mc-chip py-3"
+                      data-active={tab === "join"}
+                      onClick={() => setTab("join")}
+                    >
+                      Join
+                    </button>
+                  </div>
+                ) : null}
+                {intent?.kind === "seat" ? (
+                  <p className="text-sm text-[#b7a88a]">
+                    Restoring your seat...
+                  </p>
                 ) : (
-                  <>
-                    <LogIn size={16} /> Ride to the hall
-                  </>
+                  <div className="space-y-5">
+                    <label className="block text-xs text-[#a89268]">
+                      Your name (optional)
+                      <input
+                        className="mc-input mt-2 w-full px-3 py-2.5 text-sm"
+                        value={name}
+                        maxLength={20}
+                        placeholder="Challenger"
+                        onChange={(event) => {
+                          setName(event.target.value);
+                          try {
+                            localStorage.setItem(
+                              "kg.online.name",
+                              event.target.value,
+                            );
+                          } catch {
+                            /* restricted storage */
+                          }
+                        }}
+                      />
+                    </label>
+                    {tab === "host" ? (
+                      <div>
+                        <p className="mb-2 text-xs text-[#a89268]">
+                          Your banner
+                        </p>
+                        <div className="grid grid-cols-3 gap-2">
+                          {(["w", "b", "random"] as SeatPreference[]).map(
+                            (option) => (
+                              <button
+                                key={option}
+                                type="button"
+                                className="mc-chip py-2.5"
+                                data-active={seat === option}
+                                onClick={() => setSeat(option)}
+                              >
+                                {option === "w"
+                                  ? "Ivory"
+                                  : option === "b"
+                                    ? "Obsidian"
+                                    : "Random"}
+                              </button>
+                            ),
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-sm text-[#b7a88a]">
+                        {intent?.kind === "join"
+                          ? "Your opponent invited you to a private duel."
+                          : "Open the private opponent invite to join a duel. A hall label alone cannot claim a seat."}
+                      </p>
+                    )}
+                    <button
+                      type="button"
+                      className="mc-btn mc-btn-primary flex w-full items-center justify-center gap-2 py-3.5 disabled:opacity-50"
+                      disabled={
+                        noService ||
+                        busy ||
+                        (tab === "join" && intent?.kind !== "join")
+                      }
+                      onClick={tab === "host" ? () => void host() : join}
+                    >
+                      {busy ? (
+                        <>
+                          <Loader2 size={16} className="animate-spin" />
+                          Connecting...
+                        </>
+                      ) : tab === "host" ? (
+                        "Open a hall"
+                      ) : (
+                        "Join duel"
+                      )}
+                    </button>
+                  </div>
                 )}
-              </button>
-            </div>
+              </>
+            )}
+            {error ? (
+              <p role="alert" className="mt-4 text-xs text-[#d98a6a]">
+                {error}
+              </p>
+            ) : null}
+            {status === "connecting" || status === "reconnecting" ? (
+              <p role="status" className="mt-4 text-xs text-[#9c8b6c]">
+                {status === "reconnecting"
+                  ? "Reconnecting and restoring the board..."
+                  : "Connecting..."}
+              </p>
+            ) : null}
           </>
         )}
       </div>

@@ -14,8 +14,8 @@ import { Hud } from "./Hud";
 import { MainMenu, type MatchConfig } from "./MainMenu";
 import { OnlineBridge } from "../net/onlineBridge";
 import type { ConnectionStatus } from "../net/onlineClient";
-import { normaliseRoomCode } from "../net/protocol";
-import { OnlineLobby, type OnlineSession } from "./OnlineLobby";
+import { clearPrivateFragment, readPrivateIntent } from "../net/privateLink";
+import { OnlineLobby, PrivateLinkActions, onlineFailureCopy, type OnlineSession } from "./OnlineLobby";
 import { SettingsPanel, type GameSettings } from "./SettingsPanel";
 import { useGameSnapshot } from "./useGameSnapshot";
 import "./medieval.css";
@@ -55,18 +55,9 @@ export function GameShell() {
    */
   const eraAtBoot: EraId = settings.era;
 
-  /** Shared invite link: ?room=ABCDE opens the lobby straight onto Join. */
-  const invitedRoom = useMemo(() => {
-    if (typeof window === "undefined") return null;
-    try {
-      const code = new URLSearchParams(window.location.search).get("room");
-      if (!code) return null;
-      const clean = normaliseRoomCode(code);
-      return clean.length === 5 ? clean : null;
-    } catch {
-      return null;
-    }
-  }, []);
+  // Only the private-link helper interprets credentials. Invalid fragments
+  // also open the lobby so it can explain the failure and offer a menu exit.
+  const privateEntry = useMemo(() => Boolean(readPrivateIntent(window.location) || window.location.hash), []);
 
   const [phase, setPhase] = useState<Phase>("loading");
   const [progress, setProgress] = useState(0);
@@ -92,8 +83,10 @@ export function GameShell() {
   /** Live online session. Null in every offline mode. */
   const onlineRef = useRef<OnlineSession | null>(null);
   const bridgeRef = useRef<OnlineBridge | null>(null);
-  const [online, setOnline] = useState<{ code: string; color: "w" | "b" } | null>(null);
+  const [online, setOnline] = useState<{ matchId: string; color: "w" | "b" } | null>(null);
   const [netStatus, setNetStatus] = useState<ConnectionStatus>("idle");
+  const [onlineFatal, setOnlineFatal] = useState<string | null>(null);
+  const [showReturnLink, setShowReturnLink] = useState(false);
 
   // ------------------------------------------------------------ boot the scene
   useEffect(() => {
@@ -168,7 +161,7 @@ export function GameShell() {
         }
         return;
       }
-      if (invitedRoom) {
+      if (privateEntry) {
         // Shared invite link - skip the intro and go straight to the lobby.
         setPhase("lobby");
         return;
@@ -184,7 +177,7 @@ export function GameShell() {
       engineRef.current = null;
       engine.dispose();
     };
-  }, [controller, detected, eraAtBoot, review.review, review.fen, review.play, invitedRoom]);
+  }, [controller, detected, eraAtBoot, review.review, review.fen, review.play, privateEntry]);
 
   useEffect(() => () => controller.dispose(), [controller]);
 
@@ -314,6 +307,8 @@ export function GameShell() {
     }
     setOnline(null);
     setNetStatus("idle");
+    setOnlineFatal(null);
+    setShowReturnLink(false);
   }, []);
 
   // A live socket must never outlive the shell. Declared after endOnline so
@@ -326,7 +321,8 @@ export function GameShell() {
       stopAttract();
       void audio.unlock();
       onlineRef.current = session;
-      setOnline({ code: session.code, color: session.color });
+      setOnline({ matchId: session.matchId, color: session.color });
+      setOnlineFatal(null);
 
       const engine = engineRef.current;
       engine?.setAttract(false);
@@ -343,8 +339,7 @@ export function GameShell() {
       });
       bridgeRef.current = bridge;
 
-      // Moves now leave the board and go to the relay; the figure only walks
-      // when the server echoes the move back.
+      // The board changes only after the server confirms a move.
       engine?.setMoveSink((from, to, promotion) => bridge.submitMove(from, to, promotion));
 
       // The client is already connected by the time the shell takes it over,
@@ -352,10 +347,11 @@ export function GameShell() {
       // the live value first, then subscribe for subsequent transitions.
       setNetStatus(session.client.getStatus());
       const offStatus = session.client.on("status", ({ status }) => setNetStatus(status));
-      session.client.on("failed", ({ fatal, message }) => {
+      session.client.on("failed", ({ fatal, code }) => {
         if (!fatal) return;
-        setNotice(message);
-        setTimeout(() => setNotice(null), 5000);
+        engineRef.current?.setInteractive(false);
+        setNotice(null);
+        setOnlineFatal(onlineFailureCopy(code));
       });
       void offStatus;
 
@@ -365,6 +361,7 @@ export function GameShell() {
   );
 
   const returnToMenu = useCallback(() => {
+    clearPrivateFragment(window.history, window.location);
     endOnline();
     controller.stop();
     const engine = engineRef.current;
@@ -415,10 +412,8 @@ export function GameShell() {
 
   const handleResign = useCallback(() => {
     audio.blip("deny");
-    // Online: only the relay may end the game, so the local controller is not
-    // touched - the authoritative result comes back over the socket.
     if (bridgeRef.current) {
-      bridgeRef.current.resign();
+      setNotice("Resignation is not available in this match.");
       return;
     }
     controller.resign();
@@ -426,9 +421,7 @@ export function GameShell() {
 
   const handleRematch = useCallback(() => {
     if (bridgeRef.current) {
-      bridgeRef.current.requestRematch();
-      setNotice("Rematch offered - waiting for your opponent.");
-      setTimeout(() => setNotice(null), 4000);
+      returnToMenu();
       return;
     }
     const current = controller.getSnapshot();
@@ -438,7 +431,7 @@ export function GameShell() {
       playerColor: current.playerColor,
       clockMinutes: current.clock.enabled ? current.clock.initialMs / 60_000 : null,
     });
-  }, [controller, startMatch]);
+  }, [controller, startMatch, returnToMenu]);
 
   const handleFullscreen = useCallback(() => {
     const element = document.documentElement;
@@ -549,13 +542,29 @@ export function GameShell() {
             <span className="mc-net" data-state={netStatus}>
               <span className="mc-net-dot" />
               {netStatus === "connected"
-                ? `HALL ${online.code}`
+                ? `HALL ${online.matchId}`
                 : netStatus === "reconnecting"
                   ? "RECONNECTING"
                   : netStatus === "connecting"
                     ? "CONNECTING"
                     : "OFFLINE"}
             </span>
+          </div>
+        ) : null}
+
+        {phase === "playing" && online && !onlineFatal ? (
+          <div className="pointer-events-auto absolute right-4 top-14 z-30 max-w-sm">
+            <button type="button" className="mc-chip px-3 py-2 text-xs" onClick={() => setShowReturnLink((open) => !open)}>My private return link</button>
+            {showReturnLink ? <div className="mc-slate mt-2 p-4"><PrivateLinkActions returnLink={onlineRef.current?.client.getReturnLink() ?? null} /></div> : null}
+          </div>
+        ) : null}
+
+        {onlineFatal ? (
+          <div className="pointer-events-auto absolute inset-0 z-40 flex items-center justify-center bg-black/75 px-6">
+            <div className="mc-slate mc-goldleaf max-w-sm space-y-4 p-6">
+              <p role="alert" className="text-sm text-[#d98a6a]">{onlineFatal}</p>
+              <button type="button" className="mc-btn w-full py-3" onClick={returnToMenu}>Back to main menu</button>
+            </div>
           </div>
         ) : null}
 

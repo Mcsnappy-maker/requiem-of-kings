@@ -14,7 +14,7 @@ export interface MatchConfig {
 
 interface MainMenuProps {
   onStart: (config: MatchConfig) => void;
-  /** Opens the online lobby (host / join a hall by code). */
+  /** Opens the online lobby for private invitations and return links. */
   onPlayOnline: () => void;
   onOpenSettings: () => void;
   attract: boolean;
@@ -164,11 +164,11 @@ export function MainMenu({ onStart, onPlayOnline, onOpenSettings, attract, onInt
         ) : tab === "online" ? (
           <div className="mc-fade space-y-3">
             <p className="text-sm italic leading-relaxed text-[#b7a88a]">
-              Duel a friend across the world. Open a hall and send them the five-character code, or ride to theirs.
+              Duel a friend across the world. Open an untimed hall and share the opponent invite, or open an invite you received.
             </p>
             <p className="text-xs italic leading-relaxed text-[#9c8b6c]">
-              The relay keeps the board honest — every move is checked before it reaches your opponent. Lose your
-              connection and your seat is held for a minute while you ride back.
+              Every move is checked by the server. Save your private return link to reopen your seat on another device.
+              Keep it private: anyone with that link controls your seat.
             </p>
           </div>
         ) : (
