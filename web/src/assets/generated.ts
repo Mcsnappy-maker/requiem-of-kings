@@ -61,6 +61,8 @@ export interface PieceAnimationSet {
   walk?: string;
   /** Looping in-place run — the knight's charge through its leap. */
   run?: string;
+  /** One-shot flinch when a blow lands, played just before the death clip. */
+  hit?: string;
 }
 
 export const PIECE_ANIMATED_MODELS: Record<Faction, Roster<PieceAnimationSet>> = {

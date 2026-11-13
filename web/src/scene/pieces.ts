@@ -10,6 +10,7 @@ import {
 } from "../assets/generated";
 import type { Faction, PieceKind } from "../core/types";
 import { DEFAULT_ERA, ERAS, type EraId, type EraRoster } from "./eras";
+import { heroAnimationSet, heroSpec, type HeroSpec, type HeroStyle } from "./heroes";
 import { BADGE_LIFT, BADGE_SCALE, TOKEN_SCALE, rankBadgeTexture, tacticalTokenTexture } from "./rankBadges";
 import { radialTexture } from "./textures";
 import { wearSurface } from "./detail";
@@ -183,7 +184,7 @@ function measureModel(object: THREE.Object3D): THREE.Box3 {
   const toRoot = new THREE.Matrix4();
   object.traverse((node) => {
     const mesh = node as THREE.Mesh;
-    if (!mesh.isMesh || !mesh.geometry) return;
+    if (!mesh.isMesh || !mesh.geometry || !mesh.visible) return;
     const skinned = node as THREE.SkinnedMesh;
     if (skinned.isSkinnedMesh) {
       skinned.skeleton.update();
@@ -208,12 +209,14 @@ export interface PieceClips {
   walk?: THREE.AnimationClip;
   /** Looping in-place run — the knight charging through its leap. */
   run?: THREE.AnimationClip;
+  /** One-shot flinch as a blow lands (hero rigs only). */
+  hit?: THREE.AnimationClip;
 }
 
 export type ClipName = keyof PieceClips;
 
 /** Every clip a rig can carry, in the order the game needs them. */
-export const CLIP_ORDER: ClipName[] = ["idle", "attack", "death", "walk", "run"];
+export const CLIP_ORDER: ClipName[] = ["idle", "attack", "death", "walk", "run", "hit"];
 
 /**
  * Fetched together with the rig itself. Everything else is pulled in afterwards
@@ -276,6 +279,10 @@ export class PieceView {
   readonly color: Faction;
 
   private materials: THREE.MeshStandardMaterial[] = [];
+  /** Hero materials keep their own emissive identity (burning blade, soul fire). */
+  private heroEmissive = new Map<THREE.MeshStandardMaterial, { color: number; intensity: number }>();
+  readonly heroId: string | null;
+  private heroFocus: THREE.Object3D | null = null;
   private baseEmissive = 0.05;
   private glow: THREE.Mesh;
   private shadow: THREE.Mesh | null = null;
@@ -359,6 +366,8 @@ export class PieceView {
     this.kind = kind;
     this.color = color;
     this.majestic = ROYAL_KINDS.includes(kind);
+    this.heroId = (model.userData.hero as string | undefined) ?? null;
+    this.heroFocus = model.getObjectByName("hero_prop") ?? null;
 
     this.container.name = `piece_${color}${kind}`;
     this.container.add(this.runtime);
@@ -391,7 +400,13 @@ export class PieceView {
       mesh.userData.piece = this;
       const source = mesh.material as THREE.MeshStandardMaterial;
       const material = source.clone();
-      applyFactionLook(material, color, ownLivery);
+      const hero = this.heroId ? heroSpec(this.heroId) : undefined;
+      if (hero) {
+        const base = applyHeroLook(material, hero.style, mesh.name);
+        this.heroEmissive.set(material, base);
+      } else {
+        applyFactionLook(material, color, ownLivery);
+      }
       installDissolve(material, this.dissolveUniforms, 0.85);
       mesh.material = material;
       this.materials.push(material);
@@ -564,6 +579,8 @@ export class PieceView {
    * aligned against the pose the player actually sees.
    */
   private equipArms(model: THREE.Object3D, unit: number, baseY: number): void {
+    // Heroes ship with their weapons on the rig; procedural props go on top of nothing.
+    if (model.userData.bakedArms) return;
     try {
       this.mixer?.update(0);
       const arms = attachWeapons(model, this.kind, this.color, unit, baseY);
@@ -780,6 +797,32 @@ export class PieceView {
   }
 
   /**
+   * One-shot flinch (hero rigs). Returns its length, or 0 when the rig has no
+   * hit clip. The caller follows it with {@link playDeath}, which cross-fades
+   * out of it.
+   */
+  playHit(): number {
+    const action = this.actions.get("hit");
+    if (!action || !this.mixer || this.slain) return 0;
+    const clip = action.getClip();
+    for (const [key, other] of this.actions) {
+      if (key !== "hit") other.fadeOut(0.06);
+    }
+    this.marchLoop = null;
+    action.reset();
+    action.setLoop(THREE.LoopOnce, 1);
+    action.clampWhenFinished = true;
+    action.paused = false;
+    action.setEffectiveTimeScale(1.15);
+    action.setEffectiveWeight(1);
+    action.fadeIn(0.04).play();
+    this.activeOneShot = null;
+    this.idleLooping = false;
+    this.lockRootMotion = true;
+    return clip.duration / 1.15;
+  }
+
+  /**
    * Starts the death clip and returns how long it runs. The figure is marked
    * slain so hover/selection lift, sway and the idle stance stop interfering
    * with the fall — the corpse holds the last frame until it is cleared away.
@@ -890,6 +933,15 @@ export class PieceView {
    * fire hangs off the prop wherever the casting arm has swung it.
    */
   castOrigin(): THREE.Vector3 {
+    if (this.heroFocus) {
+      // Hero staff: cast from the crown of the prop, wherever the arm has swung it.
+      this.heroFocus.updateWorldMatrix(true, true);
+      const box = new THREE.Box3().setFromObject(this.heroFocus);
+      if (!box.isEmpty()) {
+        const centre = box.getCenter(new THREE.Vector3());
+        return new THREE.Vector3(centre.x, box.max.y - 0.04, centre.z);
+      }
+    }
     const focus = this.arms?.focus;
     if (focus) {
       focus.updateWorldMatrix(true, false);
@@ -1041,13 +1093,15 @@ export class PieceView {
 
     const target = this.selected ? 0.5 : this.hovered ? 0.32 : 0.06;
     const alarmPulse = this.alarm > 0 ? (Math.sin(elapsed * 7) * 0.5 + 0.5) * this.alarm : 0;
-    const hitGlow = this.hit * this.hit * 2.6;
+    const hitGlow = this.hit * this.hit * 0.55;
     for (const material of this.materials) {
-      const value = this.baseEmissive + target * 0.9 + alarmPulse * 1.5 + hitGlow;
+      const own = this.heroEmissive.get(material);
+      const base = own ? own.intensity : this.baseEmissive;
+      const value = base + target * (own ? 0.35 : 0.9) + alarmPulse * 1.5 + hitGlow;
       material.emissiveIntensity += (value - material.emissiveIntensity) * Math.min(1, delta * 8);
       if (this.hit > 0.02) material.emissive.setHex(0xff3418);
       else if (this.alarm > 0) material.emissive.setHex(0xff2a1a);
-      else material.emissive.setHex(this.color === "w" ? 0x2a4d94 : 0x711a12);
+      else material.emissive.setHex(own ? own.color : this.color === "w" ? 0x5a1804 : 0x350d52);
     }
     if (this.arms) {
       // Steel and gems answer the same highlight, but keep their own hues.
@@ -1076,11 +1130,14 @@ export class PieceView {
   private updateSlain(delta: number): void {
     if (!this.flat) this.mixer?.update(delta);
     this.updateToken(delta, 0);
-    const hitGlow = this.hit * this.hit * 3;
+    const hitGlow = this.hit * this.hit * 0.65;
     for (const material of this.materials) {
-      const value = this.baseEmissive + hitGlow;
+      const own = this.heroEmissive.get(material);
+      const value = (own ? own.intensity : this.baseEmissive) + hitGlow;
       material.emissiveIntensity += (value - material.emissiveIntensity) * Math.min(1, delta * 10);
-      material.emissive.setHex(this.hit > 0.02 ? 0xff3418 : this.color === "w" ? 0x2a4d94 : 0x711a12);
+      material.emissive.setHex(
+        this.hit > 0.02 ? 0xff3418 : own ? own.color : this.color === "w" ? 0x5a1804 : 0x350d52,
+      );
     }
     if (this.arms) {
       this.arms.materials.forEach((material, index) => {
@@ -1136,6 +1193,65 @@ export class PieceView {
     this.container.removeFromParent();
     this.container.clear();
   }
+}
+
+/**
+ * Dresses a hero material for its army. Returns the emissive identity the
+ * per-frame highlight loop should settle back to (colour + intensity), so a
+ * burning blade or a soul-fire eye stays lit instead of being reset to the
+ * generic faction glow.
+ *
+ * Ember Paladin: blackened steel plate, crimson cape and gold trim from the
+ *   pack's own palette, with the greatsword heated to a molten orange.
+ * Deathweaver: bone darkened to an ashen grey-violet, eyes and spirit staff
+ *   burning violet.
+ */
+function applyHeroLook(
+  material: THREE.MeshStandardMaterial,
+  style: HeroStyle,
+  meshName: string,
+): { color: number; intensity: number } {
+  material.envMapIntensity = 1.2;
+  if (style === "paladin") {
+    if (meshName === "2H_Sword") {
+      material.color.setHex(0xffd2a0);
+      material.metalness = 0.9;
+      material.roughness = 0.28;
+      material.emissive = new THREE.Color(0xff4a10);
+      material.emissiveIntensity = 2.2;
+      material.needsUpdate = true;
+      return { color: 0xff4a10, intensity: 2.2 };
+    }
+    // Darkened so the steel reads blackened while red and gold stay saturated.
+    material.color.setHex(0x8c8d9a);
+    material.metalness = 0.45;
+    material.roughness = 0.5;
+    material.emissive = new THREE.Color(0x3a0c02);
+    material.emissiveIntensity = 0.18;
+    material.needsUpdate = true;
+    return { color: 0x3a0c02, intensity: 0.18 };
+  }
+  // deathweaver
+  if (material.name === "Glow") {
+    material.color.setHex(0xc084fc);
+    material.emissive = new THREE.Color(0xa24bff);
+    material.emissiveIntensity = 3.2;
+    material.needsUpdate = true;
+    return { color: 0xa24bff, intensity: 3.2 };
+  }
+  if (meshName === "" || /staff|prop/i.test(meshName)) {
+    material.emissive = new THREE.Color(0x7a2bd6);
+    material.emissiveIntensity = 0.9;
+    material.needsUpdate = true;
+    return { color: 0x7a2bd6, intensity: 0.9 };
+  }
+  material.color.setHex(0x9a96ae);
+  material.metalness = 0.1;
+  material.roughness = 0.62;
+  material.emissive = new THREE.Color(0x2a0a45);
+  material.emissiveIntensity = 0.3;
+  material.needsUpdate = true;
+  return { color: 0x2a0a45, intensity: 0.3 };
 }
 
 function applyFactionLook(
@@ -1312,6 +1428,25 @@ async function withDownloadSlot<T>(job: () => Promise<T>): Promise<T> {
   }
 }
 
+/**
+ * Hero GLBs carry their whole animation library, so one parse must serve the
+ * rig and every clip: parsing a 4MB skinned file once per clip would stall the
+ * main thread. Keyed by URL; a failed load is evicted so it can be retried.
+ */
+const gltfCache = new Map<string, Promise<LoadedGltf>>();
+
+function loadGltfShared(loader: GLTFLoader, url: string, attempts = 4): Promise<LoadedGltf> {
+  let job = gltfCache.get(url);
+  if (!job) {
+    job = loadGltf(loader, url, attempts).catch((error) => {
+      gltfCache.delete(url);
+      throw error;
+    });
+    gltfCache.set(url, job);
+  }
+  return job;
+}
+
 /** Queued GLB fetch with exponential back-off — transient drops are retried. */
 async function loadGltf(loader: GLTFLoader, url: string, attempts = 4): Promise<LoadedGltf> {
   let last: unknown = new Error(`could not load ${url}`);
@@ -1376,6 +1511,8 @@ export class PieceFactory {
    * has not sculpted yet.
    */
   private animationSet(faction: Faction, kind: PieceKind): PieceAnimationSet | undefined {
+    const hero = heroAnimationSet(`${faction}${kind}`);
+    if (hero) return hero;
     const roster = this.eraRoster();
     if (roster && roster[kind]) return roster[kind];
     return PIECE_ANIMATED_MODELS[faction][kind];
@@ -1448,12 +1585,54 @@ export class PieceFactory {
     return this.normalize(gltf.scene, kind, {}, true);
   }
 
+  /** Which hero (if any) a set belongs to, found by its rig URL. */
+  private heroKeyFor(set: PieceAnimationSet): string {
+    for (const key of ["wn", "bq"]) {
+      if (heroAnimationSet(key)?.rigged === set.rigged) return key;
+    }
+    return "";
+  }
+
+  /**
+   * One-time dressing of a hero scene (runs once per template, guarded by a
+   * flag because the parsed scene is shared): hides the weapons the pack ships
+   * on the rig, parents the staff to the hand bone and flags the scene so the
+   * generic procedural weapons are not added on top.
+   */
+  private async dressHero(scene: THREE.Object3D, hero: HeroSpec): Promise<void> {
+    if (scene.userData.heroDressed) return;
+    scene.userData.heroDressed = true;
+    scene.userData.bakedArms = true;
+    scene.userData.hero = hero.id;
+    for (const name of hero.hide) {
+      const node = scene.getObjectByName(name);
+      if (node) node.visible = false;
+    }
+    if (hero.prop) {
+      try {
+        const prop = await loadGltf(this.loader, hero.prop.url, 3);
+        const bone = scene.getObjectByName(hero.prop.bone);
+        if (bone) {
+          const staff = prop.scene.clone(true);
+          staff.name = "hero_prop";
+          bone.add(staff);
+        }
+      } catch (error) {
+        console.warn(`[pieces] hero prop failed for ${hero.id}`, error);
+      }
+    }
+  }
+
   /**
    * Rigged sculpt + the clips the opening needs. The clips share the auto-rig
    * skeleton, so they bind straight onto the rigged scene — no retargeting.
    */
   private async loadAnimated(kind: PieceKind, set: PieceAnimationSet): Promise<Template> {
-    const rigged = await loadGltf(this.loader, set.rigged, 5);
+    const hero = heroSpec(this.heroKeyFor(set));
+    const rigged = hero
+      ? await loadGltfShared(this.loader, set.rigged, 5)
+      : await loadGltf(this.loader, set.rigged, 5);
+    if (hero) await this.dressHero(rigged.scene, hero);
     const clips: PieceClips = {};
     await Promise.all(
       OPENING_CLIPS.map(async (name) => {
@@ -1469,8 +1648,14 @@ export class PieceFactory {
   /** One clip GLB — queued, retried, and never allowed to throw at the caller. */
   private async fetchClip(url: string, name: ClipName): Promise<THREE.AnimationClip | null> {
     try {
-      const gltf = await loadGltf(this.loader, url, 5);
-      const source = gltf.animations[0];
+      // "model.glb#ClipName" - one shared parse, clip picked out by name.
+      const hash = url.indexOf("#");
+      const gltf =
+        hash >= 0
+          ? await loadGltfShared(this.loader, url.slice(0, hash), 5)
+          : await loadGltf(this.loader, url, 5);
+      const wanted = hash >= 0 ? url.slice(hash + 1) : null;
+      const source = wanted ? gltf.animations.find((a) => a.name === wanted) : gltf.animations[0];
       if (!source) return null;
       const clip = source.clone();
       clip.name = name;
@@ -1608,7 +1793,8 @@ export class PieceFactory {
     const size = new THREE.Vector3();
     box.getSize(size);
     const height = Math.max(0.0001, size.y);
-    const scale = PIECE_HEIGHT[kind] / height;
+    const stature = heroSpec(String(scene.userData.hero ?? ""))?.stature ?? 1;
+    const scale = (PIECE_HEIGHT[kind] * stature) / height;
 
     const centre = new THREE.Vector3();
     box.getCenter(centre);

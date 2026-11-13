@@ -399,88 +399,105 @@ export class CastleHall {
   }
 
   private buildGothicDetails(): void {
-    // 1. Monumental Stained-Glass Rose Window
+    // 1. Monumental Stained-Glass Rose Window framed in carved stone tracery
     const roseTex = this.track(gothicRoseWindowTexture());
-    const roseGeo = this.track(new THREE.CircleGeometry(4.2, 32));
+    const roseGeo = this.track(new THREE.CircleGeometry(3.6, 32));
     const roseMat = this.track(
       new THREE.MeshBasicMaterial({
         map: roseTex,
         transparent: true,
-        opacity: 0.95,
+        opacity: 0.96,
         side: THREE.DoubleSide,
       }),
     );
     this.roseWindow = new THREE.Mesh(roseGeo, roseMat);
-    this.roseWindow.position.set(0, 14.8, -16.3);
-    this.roseWindow.lookAt(0, 14.8, 0);
+    this.roseWindow.position.set(0, 6.2, -15.4);
+    this.roseWindow.lookAt(0, 6.2, 0);
     this.group.add(this.roseWindow);
 
-    // 2. Weathered Stone Guardian Sentinels flanking the dais
-    const statueStone = stoneSurface();
-    const statueMat = this.track(
+    const frameStone = stoneSurface();
+    const frameMat = this.track(
       new THREE.MeshStandardMaterial({
-        color: 0x322f2a,
-        roughness: 0.94,
-        metalness: 0.05,
-        normalMap: statueStone.normalMap,
-        normalScale: new THREE.Vector2(1.2, 1.2),
-        roughnessMap: statueStone.roughnessMap,
+        color: 0x3a352f,
+        roughness: 0.9,
+        metalness: 0.08,
+        normalMap: frameStone.normalMap,
+        normalScale: new THREE.Vector2(1.0, 1.0),
+      }),
+    );
+    const frameGeo = this.track(new THREE.TorusGeometry(3.65, 0.28, 12, 36));
+    const frame = new THREE.Mesh(frameGeo, frameMat);
+    frame.position.set(0, 6.2, -15.35);
+    this.group.add(frame);
+
+    // 2. Gothic Wrought-Iron & Stone Braziers flanking the northern dais
+    const ironMat = this.track(
+      new THREE.MeshStandardMaterial({
+        color: 0x222024,
+        roughness: 0.45,
+        metalness: 0.85,
+      }),
+    );
+    const emberMat = this.track(
+      new THREE.MeshStandardMaterial({
+        color: 0xff5a1f,
+        emissive: 0xff4500,
+        emissiveIntensity: 2.6,
+        roughness: 0.6,
       }),
     );
 
-    const plinthGeo = this.track(new THREE.BoxGeometry(1.6, 1.8, 1.6));
-    const bodyGeo = this.track(new THREE.CylinderGeometry(0.5, 0.65, 3.2, 8));
-    const hoodGeo = this.track(new THREE.ConeGeometry(0.55, 1.1, 8));
-    const swordGeo = this.track(new THREE.BoxGeometry(0.12, 3.4, 0.3));
+    const plinthGeo = this.track(new THREE.CylinderGeometry(0.68, 0.86, 1.35, 8));
+    const stemGeo = this.track(new THREE.CylinderGeometry(0.24, 0.36, 0.9, 8));
+    const bowlGeo = this.track(new THREE.CylinderGeometry(0.72, 0.3, 0.55, 8));
+    const coalGeo = this.track(new THREE.SphereGeometry(0.5, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.5));
 
-    const statuePositions: [number, number, number][] = [
-      [-7.8, -6.8, Math.PI / 4],
-      [7.8, -6.8, -Math.PI / 4],
+    const brazierPositions: [number, number][] = [
+      [-7.4, -7.2],
+      [7.4, -7.2],
     ];
 
-    for (const [x, z, rot] of statuePositions) {
-      const statueGroup = new THREE.Group();
-      statueGroup.position.set(x, 0, z);
-      statueGroup.rotation.y = rot;
+    for (const [x, z] of brazierPositions) {
+      const brazier = new THREE.Group();
+      brazier.position.set(x, -0.62, z);
 
-      const plinth = new THREE.Mesh(plinthGeo, statueMat);
-      plinth.position.y = 0.9 - 0.62;
+      const plinth = new THREE.Mesh(plinthGeo, frameMat);
+      plinth.position.y = 0.675;
       plinth.castShadow = true;
       plinth.receiveShadow = true;
-      statueGroup.add(plinth);
+      brazier.add(plinth);
 
-      const body = new THREE.Mesh(bodyGeo, statueMat);
-      body.position.y = 1.8 + 1.6 - 0.62;
-      body.castShadow = true;
-      body.receiveShadow = true;
-      statueGroup.add(body);
+      const stem = new THREE.Mesh(stemGeo, ironMat);
+      stem.position.y = 1.35 + 0.45;
+      stem.castShadow = true;
+      brazier.add(stem);
 
-      const hood = new THREE.Mesh(hoodGeo, statueMat);
-      hood.position.y = 1.8 + 3.2 + 0.45 - 0.62;
-      hood.castShadow = true;
-      statueGroup.add(hood);
+      const bowl = new THREE.Mesh(bowlGeo, ironMat);
+      bowl.position.y = 2.25 + 0.25;
+      bowl.castShadow = true;
+      brazier.add(bowl);
 
-      const sword = new THREE.Mesh(swordGeo, statueMat);
-      sword.position.set(0, 1.8 + 1.4 - 0.62, 0.65);
-      sword.castShadow = true;
-      statueGroup.add(sword);
+      const coals = new THREE.Mesh(coalGeo, emberMat);
+      coals.position.y = 2.62;
+      coals.scale.set(1, 0.45, 1);
+      brazier.add(coals);
 
-      this.group.add(statueGroup);
+      this.group.add(brazier);
     }
 
-    // 3. Torn Heraldic Banners hanging from colonnade
+    // 3. Torn Heraldic Banners hanging visibly along the northern colonnade
     const emberTex = this.track(emberBannerTexture());
     const hollowTex = this.track(hollowBannerTexture());
-    const bannerGeo = this.track(new THREE.PlaneGeometry(1.8, 4.6, 1, 8));
+    const bannerGeo = this.track(new THREE.PlaneGeometry(1.6, 4.0, 1, 8));
 
-    const emberMat = this.track(
+    const emberBannerMat = this.track(
       new THREE.MeshStandardMaterial({
         map: emberTex,
         roughness: 0.85,
         side: THREE.DoubleSide,
       }),
     );
-    const hollowMat = this.track(
+    const hollowBannerMat = this.track(
       new THREE.MeshStandardMaterial({
         map: hollowTex,
         roughness: 0.85,
@@ -489,11 +506,11 @@ export class CastleHall {
     );
 
     const emberPositions: [number, number, number][] = [
-      [-10.2, 7.2, 5.2],
-      [-5.2, 7.2, 10.2],
+      [-8.8, 4.5, -5.8],
+      [-5.5, 4.5, -9.2],
     ];
     for (const [x, y, z] of emberPositions) {
-      const banner = new THREE.Mesh(bannerGeo, emberMat);
+      const banner = new THREE.Mesh(bannerGeo, emberBannerMat);
       banner.position.set(x, y, z);
       banner.lookAt(0, y, 0);
       banner.castShadow = true;
@@ -502,11 +519,11 @@ export class CastleHall {
     }
 
     const hollowPositions: [number, number, number][] = [
-      [10.2, 7.2, -5.2],
-      [5.2, 7.2, -10.2],
+      [8.8, 4.5, -5.8],
+      [5.5, 4.5, -9.2],
     ];
     for (const [x, y, z] of hollowPositions) {
-      const banner = new THREE.Mesh(bannerGeo, hollowMat);
+      const banner = new THREE.Mesh(bannerGeo, hollowBannerMat);
       banner.position.set(x, y, z);
       banner.lookAt(0, y, 0);
       banner.castShadow = true;

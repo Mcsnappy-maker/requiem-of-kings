@@ -45,6 +45,13 @@ export const SCENARIOS: Record<string, { fen: string; play?: [string, string]; n
     play: ["d2", "d7"],
     note: "queen captures - longest authored beat",
   },
+  // Vertical-slice showcase: the Ember Paladin (white knight, d4) cuts down the
+  // Deathweaver (black queen, e6). Legal, not a check or mate - pure spectacle.
+  duel: {
+    fen: "rnb1kbnr/pppp1ppp/4q3/8/3N4/8/PPPPPPPP/R1BQKB1R w KQkq - 0 1",
+    play: ["d4", "e6"],
+    note: "Ember Paladin takes the Deathweaver - hero duel",
+  },
   // Back-rank mate in one: Ra8#.
   mate: {
     fen: "6k1/5ppp/8/8/8/8/8/R3K3 w Q - 0 1",

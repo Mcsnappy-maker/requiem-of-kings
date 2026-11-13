@@ -1215,7 +1215,7 @@ export class SceneEngine {
     // clamped delta below - but recording the clamped value made every frame
     // sample exactly 50ms and destroyed the distribution.
     const rawFrameMs = Math.max(0, now - this.lastFrameTime);
-    const delta = Math.min(0.05, Math.max(0, (now - this.lastFrameTime) / 1000));
+    const delta = Math.min(0.1, Math.max(0, (now - this.lastFrameTime) / 1000));
     this.lastFrameTime = now;
     this.elapsed += delta;
 
@@ -1498,13 +1498,23 @@ export class SceneEngine {
           // tween that never completes costs a cut-short flourish measured in
           // the beat's own budget, and the turn loop keeps its own ceiling as a
           // second line of defence.
-          const budget = spec ? spec.budget * 1000 : 6000;
+          // The Ember Paladin gets an authored duel rather than the generic
+          // knight beat. It is a longer performance, so it earns a longer budget -
+          // still well inside the controller's own 12s ceiling.
+          const heroDuel = piece.heroId === "wn" && this.cinematicIntensity === "full" && !this.tactical;
+          const savedShot: CameraShot = {
+            position: this.camera.position.clone(),
+            target: this.controls.target.clone(),
+          };
+          const budget = heroDuel ? Math.max(11_000, spec ? spec.budget * 1000 : 0) : spec ? spec.budget * 1000 : 6000;
           this.lastBeatBudgetMs = budget;
           const beatStartedAt = performance.now();
-          const performance$ = RANGED_KINDS.includes(piece.kind)
-            ? // The casters kill at range; everyone else walks into the blow.
-              this.playSpellCinematic(piece, victim, from, to, strikeSquare)
-            : this.playCaptureCinematic(piece, victim, from, to, strikeSquare);
+          const performance$ = heroDuel
+            ? this.playHeroDuel(piece, victim, from, to, strikeSquare)
+            : RANGED_KINDS.includes(piece.kind)
+              ? // The casters kill at range; everyone else walks into the blow.
+                this.playSpellCinematic(piece, victim, from, to, strikeSquare)
+              : this.playCaptureCinematic(piece, victim, from, to, strikeSquare);
           // Measured regardless of the watchdog: the work continues after a
           // timeout, so this is the only honest figure for how long the beat
           // actually needs.
@@ -1525,6 +1535,9 @@ export class SceneEngine {
             // finish the kill plainly so the board stays consistent.
             this.camera.fov = this.effectiveFov(DEFAULT_FOV);
             this.camera.updateProjectionMatrix();
+            this.camera.position.copy(savedShot.position);
+            this.controls.target.copy(savedShot.target);
+            this.controls.enabled = this.interactive;
             piece.setStrikeTilt(0);
             if (!victim.isSlain) await this.crumble(victim, from);
           }
@@ -2027,6 +2040,207 @@ export class SceneEngine {
     ]);
     audio.play("place", 0.5);
   }
+  /**
+   * THE HERO DUEL - The Ember Paladin against whatever stands on the square
+   * (best against the Deathweaver, which answers with a spell of its own).
+   *
+   * Beats: the camera drops to a low three-quarter view of the lane while the
+   * two figures turn to face each other; the Deathweaver raises its staff and
+   * gathers violet fire while the Paladin charges through the air; the bolt
+   * meets the burning blade and shatters; the Paladin lands and cuts through the
+   * caster; the Deathweaver staggers (hit clip), collapses (death clip) and
+   * gutters out in violet motes; the camera pulls home as the victor takes the
+   * square.
+   *
+   * Chess is never touched here: the outcome was decided before this runs. The
+   * camera and lens are restored in a finally block, so a thrown effect or a
+   * watchdog timeout can never leave the player stranded in the duel shot.
+   * Reduced motion keeps the choreography but not the camera moves, zoom or
+   * shake; reduced flashing dims every flash.
+   */
+  private async playHeroDuel(
+    attacker: PieceView,
+    victim: PieceView,
+    from: THREE.Vector3,
+    to: THREE.Vector3,
+    strikeSquare: SquareId,
+  ): Promise<void> {
+    const settings = QUALITY_SETTINGS[this.preset];
+    const motion = !this.reducedMotion;
+    const flash = this.reducedFlashing ? 0.35 : 1;
+    const direction = to.clone().sub(from).setY(0).normalize();
+    const standoff = to.clone().sub(direction.clone().multiplyScalar(TILE * 0.62));
+    const victimSpot = victim.container.position.clone();
+    const blow = victimSpot.clone().sub(standoff).setY(0);
+    if (blow.lengthSq() < 1e-6) blow.copy(direction);
+    blow.normalize();
+
+    const beganAt = performance.now();
+    const mark = (step: string): void =>
+      console.debug("[scene] hero duel", step, Math.round(performance.now() - beganAt), "ms");
+    const homeShot: CameraShot = {
+      position: this.camera.position.clone(),
+      target: this.controls.target.clone(),
+    };
+    const originalFov = this.camera.fov;
+    let cameraTouched = false;
+
+    // Both rigs must hold the clips the duel is built on.
+    await Promise.race([
+      Promise.all([
+        this.factory.ensureClip(attacker.color, attacker.kind, "attack"),
+        this.factory.ensureClip(victim.color, victim.kind, "death"),
+        this.factory.ensureClip(victim.color, victim.kind, "attack"),
+        this.factory.ensureClip(victim.color, victim.kind, "hit"),
+      ]),
+      wait(2),
+    ]);
+
+    try {
+      // ---- 1. The lane is framed low, from the side the player is already on.
+      mark("frame");
+      const mid = from.clone().add(to).multiplyScalar(0.5);
+      const side = new THREE.Vector3(-direction.z, 0, direction.x);
+      if (side.dot(this.camera.position.clone().sub(mid)) < 0) side.negate();
+      const wide: CameraShot = {
+        position: mid.clone().addScaledVector(side, 4.4).addScaledVector(direction, -1.6).setY(1.55),
+        target: mid.clone().setY(0.7),
+      };
+      const turning = Promise.all([
+        attacker.turnTowards(victimSpot, this.tweens, 0.4),
+        victim.turnTowards(from, this.tweens, 0.4),
+      ]);
+      if (motion) {
+        cameraTouched = true;
+        await Promise.all([this.moveCameraTo(wide, 0.55), turning]);
+      } else {
+        await turning;
+      }
+      audio.judgementToll({ pan: this.stereoPan(victimSpot), volume: 0.55 });
+      await wait(0.1);
+
+      // ---- 2. Combat preparation: the caster gathers, the Paladin charges.
+      mark("prep");
+      const casterReady = victim.hasClip("attack") && victim.hasAnimations;
+      const incoming = standoff.clone().setY(0.95);
+      let deflected: Promise<void> = Promise.resolve();
+      if (casterReady) {
+        victim.playAttack();
+        deflected = (async () => {
+          await this.gatherSpell(victim, 0.5, 0.5);
+          await this.throwFireball(victim, incoming, { size: 0.5 });
+        })();
+      }
+      if (motion) {
+        void this.tweens.to({
+          duration: 0.5,
+          easing: Ease.outCubic,
+          onUpdate: (t) => {
+            this.camera.fov = originalFov - 6 * t;
+            this.camera.updateProjectionMatrix();
+          },
+        });
+      }
+      await Promise.all([this.glide(attacker, from, standoff, true, 1.15), deflected]);
+      attacker.faceTowards(victimSpot);
+
+      // ---- 3. The violet bolt breaks on the burning blade.
+      mark("parry");
+      if (casterReady) {
+        const guard = standoff.clone().setY(0.95);
+        audio.play("capture", 0.55);
+        this.effects.spawnFlash(guard, 2.6 * flash, 0.2);
+        this.effects.spawnBurst(guard, 0xc084fc, Math.round(settings.captureParticles * 0.8), { speed: 3.2, life: 0.6 });
+        this.effects.spawnBurst(guard, 0xff8a3c, Math.round(settings.captureParticles * 0.5), { speed: 2.4, life: 0.5 });
+        if (motion) this.shake.add(0.25);
+        victim.playIdle(0.1);
+      }
+      await wait(0.1);
+
+      // ---- 4. The cut.
+      mark("cut");
+      const strike = attacker.hasClip("attack") ? attacker.playAttack() : null;
+      audio.bladeWhoosh({
+        pan: this.stereoPan(standoff),
+        volume: 1,
+        weight: 0.8,
+        delay: strike && strike.duration > 0 ? Math.max(0, strike.impact - 0.2) : 0.05,
+      });
+      if (strike && strike.duration > 0) await wait(strike.impact);
+      else await this.lunge(attacker, direction, 0.8);
+
+      const impact = victimSpot.clone().setY(0.6);
+      audio.play("capture", 1);
+      this.strikeImpact(strikeSquare, 1.4);
+      this.effects.spawnFlash(impact, 4.2 * flash, 0.26);
+      this.effects.spawnBurst(impact, 0xff9a3a, Math.round(settings.captureParticles * 1.5), { speed: 4.6, life: 0.85 });
+      this.effects.spawnBurst(impact, 0xc084fc, Math.round(settings.captureParticles * 0.8), { speed: 3.2, life: 0.9 });
+      void spawnSlash(this.scene, this.tweens, impact, { color: 0xff8a2a, size: 2.3, tilt: -0.6 });
+      void spawnGroundWave(this.scene, this.tweens, victimSpot, {
+        color: 0xff7a22,
+        radius: 2.6,
+        height: BOARD_TOP + 0.03,
+        echo: true,
+      });
+      if (motion) this.shake.add(0.85);
+      audio.groundSlam({ pan: this.stereoPan(victimSpot), volume: 0.55 });
+      void this.aftershock(strikeSquare, 0.2);
+
+      // Hitstop: the whole frame holds for a breath on contact.
+      await wait(0.09);
+
+      // ---- 5. Reaction, then defeat.
+      mark("reaction");
+      const flinch = victim.playHit();
+      if (flinch > 0) await wait(Math.min(0.24, flinch * 0.65));
+      const recovery = strike ? Math.min(0.4, Math.max(0, strike.duration - strike.impact)) : 0.15;
+      await Promise.all([this.slay(victim, blow), wait(recovery)]);
+      this.effects.spawnBurst(victimSpot.clone().setY(0.35), 0xc084fc, Math.round(settings.captureParticles * 1.1), {
+        speed: 1.6,
+        life: 1.3,
+        gravity: -0.9,
+        rise: 0.9,
+      });
+
+      if (motion) {
+        void this.tweens.to({
+          duration: 0.5,
+          easing: Ease.outCubic,
+          onUpdate: (t) => {
+            this.camera.fov = originalFov - 6 * (1 - t);
+            this.camera.updateProjectionMatrix();
+          },
+        });
+      }
+
+      // ---- 6. The body gutters out; the victor takes the square; the camera goes home.
+      mark("exit");
+      attacker.playIdle(0.25);
+      const returning = motion && cameraTouched ? this.moveCameraTo(homeShot, 0.75) : Promise.resolve();
+      await Promise.all([
+        this.banish(victim, blow),
+        this.glide(attacker, standoff, to, false, 1.4),
+        returning,
+      ]);
+      cameraTouched = false;
+      audio.play("place", 0.5);
+    } finally {
+      this.camera.fov = originalFov;
+      this.camera.updateProjectionMatrix();
+      if (cameraTouched) {
+        // Interrupted mid-shot: put the camera back instantly rather than leave it in the duel frame.
+        this.camera.position.copy(homeShot.position);
+        this.controls.target.copy(homeShot.target);
+        this.controls.enabled = this.interactive;
+      }
+    }
+  }
+
+  /**
+   * The crown's prerogative: before the blow, a column of light is dropped on
+   * the condemned, a bell is rung over it, and motes are drawn up off the stone
+   * around its feet. Nothing else on the board is allowed this beat.
+   */
   private async passSentence(
     victim: PieceView,
     at: THREE.Vector3,
