@@ -65,8 +65,8 @@ const DIFFICULTY_SHORT: Record<string, string> = {
 };
 
 const CAMERA_BUTTONS: { key: CameraPreset; label: string }[] = [
-  { key: "white", label: "Ivory" },
-  { key: "black", label: "Obsidian" },
+  { key: "white", label: "Ember" },
+  { key: "black", label: "Hollow" },
   { key: "top", label: "Overhead" },
   { key: "cinematic", label: "Cinematic" },
 ];
@@ -192,7 +192,7 @@ export function Hud({
       <div className="flex items-center justify-between">
         <p className="mc-display text-[0.6rem] tracking-[0.34em] text-[#a89268]">Spoils</p>
         <span className="mc-display text-[0.72rem] text-[#e2c98f]">
-          {diff === 0 ? "even" : diff > 0 ? `ivory +${diff}` : `obsidian +${-diff}`}
+          {diff === 0 ? "even" : diff > 0 ? `Ember +${diff}` : `Hollow +${-diff}`}
         </span>
       </div>
       <div className="mt-2 space-y-1.5">
@@ -224,8 +224,8 @@ export function Hud({
                 : snapshot.thinking
                   ? "Thinking…"
                   : snapshot.turn === "w"
-                    ? "Ivory"
-                    : "Obsidian"}
+                    ? "The Ember Court"
+                    : "The Hollow Legion"}
             </p>
           </div>
           {snapshot.inCheck && snapshot.status === "playing" ? (
@@ -516,7 +516,7 @@ function ClockFace({
     <div className="flex items-center gap-1.5" style={{ opacity: active ? 1 : 0.55 }}>
       <Hourglass ratio={initial > 0 ? ms / initial : 0} urgent={urgent} />
       <div>
-        <p className="mc-display text-[0.5rem] tracking-[0.2em] text-[#a89268]">{faction === "w" ? "IVORY" : "OBSIDIAN"}</p>
+        <p className="mc-display text-[0.5rem] tracking-[0.2em] text-[#a89268]">{faction === "w" ? "EMBER COURT" : "HOLLOW LEGION"}</p>
         <p className={`mc-display text-sm ${urgent ? "text-[#ff8f7d]" : "text-[#f2e2bd]"}`}>{formatClock(ms)}</p>
       </div>
     </div>

@@ -7,7 +7,7 @@
  * the film grade all move together.
  */
 
-export type ArenaTheme = "dawn" | "frost" | "dusk" | "jungle";
+export type ArenaTheme = "ashen" | "dusk" | "dawn" | "frost" | "jungle";
 
 /**
  * Rainforest dressing. Only the jungle map stages it; every other theme carries
@@ -106,6 +106,49 @@ export interface ArenaLook {
 }
 
 export const ARENA_LOOKS: Record<ArenaTheme, ArenaLook> = {
+  /**
+   * The Ashen Throne: vast ancient Gothic cathedral with towering vaulted arches,
+   * stained-glass windows, black marble dais and burning braziers.
+   */
+  ashen: {
+    id: "ashen",
+    label: "The Ashen Throne",
+    note: "Vast ancient Gothic cathedral — towering arches, stained glass and burning braziers",
+    exposure: 1.08,
+    background: 0x05060a,
+    fog: { color: 0x0e0e14, density: 0.0165 },
+    environment: {
+      top: 0x181e2e,
+      bottom: 0x120a08,
+      glow: 0x994218,
+      warm: 0xffa055,
+      cool: 0x445580,
+      intensity: 0.88,
+    },
+    hemi: { sky: 0x3e527d, ground: 0x140e0a, intensity: 0.65 },
+    keyLight: { color: 0xffdfb0, intensity: 2.8, position: [-8, 17, 7] },
+    fill: { color: 0x627ea8, intensity: 0.62, position: [8, 7, -8] },
+    lamp: { color: 0xffe4c6, intensity: 0.32 },
+    torch: { intensity: 1.15, flame: 1.15 },
+    stone: { floor: 0x48423a, dais: 0x36302a, pillar: 0x3d3831, wall: 0x272420, rubble: 0x302c26 },
+    window: { color: 0xffa044, opacity: 0.68 },
+    shaft: { color: 0xfff0d4, opacity: 0.45 },
+    dust: { color: 0xffdeb0, opacity: 0.55 },
+    sky: { zenith: 0x060914, horizon: 0x22141c, ember: 0x8a3418 },
+    ridge: [1.05, 1.1, 1.2],
+    ground: 0x3a322b,
+    fire: 1.2,
+    smoke: { color: 0x443d38, opacity: 0.35 },
+    ash: { color: 0xffa048, opacity: 0.58 },
+    troops: { ivory: 0x424e6a, obsidian: 0x3e2a26, emissive: 0.4 },
+    birds: 0x0c0b10,
+    siegeEngines: false,
+    flora: NO_FLORA,
+    board: { light: 0xe6ded2, dark: 0x181a22, base: 0x2a2522, border: 0x9e8046, trim: 0xd4a544 },
+    bloom: { strength: 0.55, threshold: 0.76, radius: 0.72 },
+    grade: { vignette: 1.02, grain: 0.038, lift: 0.016, strength: 0.95 },
+    screenVignette: 0.5,
+  },
   /**
    * Sun Temple in the rainforest: high tropical sun, jade canopy and gilded
    * limestone. The cool green surround is the complement of the Sun Empire's
@@ -286,6 +329,6 @@ export const ARENA_LOOKS: Record<ArenaTheme, ArenaLook> = {
   },
 };
 
-export const ARENA_ORDER: ArenaTheme[] = ["jungle", "dawn", "frost", "dusk"];
+export const ARENA_ORDER: ArenaTheme[] = ["ashen", "dusk", "frost", "dawn", "jungle"];
 
-export const DEFAULT_ARENA: ArenaTheme = "jungle";
+export const DEFAULT_ARENA: ArenaTheme = "ashen";

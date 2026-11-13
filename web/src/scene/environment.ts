@@ -1,6 +1,14 @@
 import * as THREE from "three";
 
-import { flagstoneTexture, marbleTexture, shaftTexture, sparkTexture } from "./textures";
+import {
+  emberBannerTexture,
+  flagstoneTexture,
+  gothicRoseWindowTexture,
+  hollowBannerTexture,
+  marbleTexture,
+  shaftTexture,
+  sparkTexture,
+} from "./textures";
 import { marbleSurface, stoneSurface } from "./detail";
 import type { ArenaLook } from "./arena";
 import { ARENA_LOOKS, DEFAULT_ARENA } from "./arena";
@@ -33,6 +41,10 @@ export class CastleHall {
   private dustPhase: Float32Array = new Float32Array(0);
   private disposables: { dispose: () => void }[] = [];
   private elapsed = 0;
+  private banners: THREE.Mesh[] = [];
+  private roseWindow: THREE.Mesh | null = null;
+  private lightningTimer = 10;
+  private lightningFlash = 0;
 
   /** Materials the arena theme repaints. */
   private floorMaterial: THREE.MeshStandardMaterial | null = null;
@@ -72,7 +84,9 @@ export class CastleHall {
 
     this.buildFloor();
     this.buildColonnade();
+    this.buildVaultedCeiling();
     this.buildTorches();
+    this.buildGothicDetails();
     this.applyQuality(quality);
     this.applyArena(look);
   }
@@ -337,6 +351,170 @@ export class CastleHall {
     });
   }
 
+  private buildVaultedCeiling(): void {
+    const stone = stoneSurface();
+    const ribMat = this.track(
+      new THREE.MeshStandardMaterial({
+        color: 0x3a352e,
+        roughness: 0.92,
+        metalness: 0.04,
+        normalMap: stone.normalMap,
+        normalScale: new THREE.Vector2(0.85, 0.85),
+        roughnessMap: stone.roughnessMap,
+      }),
+    );
+
+    const radius = 12.5;
+    const apexHeight = 15.5;
+    const baseHeight = 9.6;
+    const ribGroup = new THREE.Group();
+    ribGroup.name = "gothic_vault_ribs";
+
+    const pairs = 6;
+    for (let i = 0; i < pairs; i += 1) {
+      const angle = (i / pairs) * Math.PI;
+      const x1 = Math.cos(angle) * radius;
+      const z1 = Math.sin(angle) * radius;
+      const x2 = -x1;
+      const z2 = -z1;
+
+      const curve = new THREE.QuadraticBezierCurve3(
+        new THREE.Vector3(x1, baseHeight, z1),
+        new THREE.Vector3(0, apexHeight * 1.25, 0),
+        new THREE.Vector3(x2, baseHeight, z2),
+      );
+      const tubeGeo = this.track(new THREE.TubeGeometry(curve, 24, 0.3, 8, false));
+      const rib = new THREE.Mesh(tubeGeo, ribMat);
+      rib.castShadow = true;
+      rib.receiveShadow = true;
+      ribGroup.add(rib);
+    }
+
+    const keystoneGeo = this.track(new THREE.CylinderGeometry(1.4, 1.1, 0.6, 12));
+    const keystone = new THREE.Mesh(keystoneGeo, ribMat);
+    keystone.position.set(0, apexHeight - 0.2, 0);
+    ribGroup.add(keystone);
+
+    this.group.add(ribGroup);
+  }
+
+  private buildGothicDetails(): void {
+    // 1. Monumental Stained-Glass Rose Window
+    const roseTex = this.track(gothicRoseWindowTexture());
+    const roseGeo = this.track(new THREE.CircleGeometry(4.2, 32));
+    const roseMat = this.track(
+      new THREE.MeshBasicMaterial({
+        map: roseTex,
+        transparent: true,
+        opacity: 0.95,
+        side: THREE.DoubleSide,
+      }),
+    );
+    this.roseWindow = new THREE.Mesh(roseGeo, roseMat);
+    this.roseWindow.position.set(0, 14.8, -16.3);
+    this.roseWindow.lookAt(0, 14.8, 0);
+    this.group.add(this.roseWindow);
+
+    // 2. Weathered Stone Guardian Sentinels flanking the dais
+    const statueStone = stoneSurface();
+    const statueMat = this.track(
+      new THREE.MeshStandardMaterial({
+        color: 0x322f2a,
+        roughness: 0.94,
+        metalness: 0.05,
+        normalMap: statueStone.normalMap,
+        normalScale: new THREE.Vector2(1.2, 1.2),
+        roughnessMap: statueStone.roughnessMap,
+      }),
+    );
+
+    const plinthGeo = this.track(new THREE.BoxGeometry(1.6, 1.8, 1.6));
+    const bodyGeo = this.track(new THREE.CylinderGeometry(0.5, 0.65, 3.2, 8));
+    const hoodGeo = this.track(new THREE.ConeGeometry(0.55, 1.1, 8));
+    const swordGeo = this.track(new THREE.BoxGeometry(0.12, 3.4, 0.3));
+
+    const statuePositions: [number, number, number][] = [
+      [-7.8, -6.8, Math.PI / 4],
+      [7.8, -6.8, -Math.PI / 4],
+    ];
+
+    for (const [x, z, rot] of statuePositions) {
+      const statueGroup = new THREE.Group();
+      statueGroup.position.set(x, 0, z);
+      statueGroup.rotation.y = rot;
+
+      const plinth = new THREE.Mesh(plinthGeo, statueMat);
+      plinth.position.y = 0.9 - 0.62;
+      plinth.castShadow = true;
+      plinth.receiveShadow = true;
+      statueGroup.add(plinth);
+
+      const body = new THREE.Mesh(bodyGeo, statueMat);
+      body.position.y = 1.8 + 1.6 - 0.62;
+      body.castShadow = true;
+      body.receiveShadow = true;
+      statueGroup.add(body);
+
+      const hood = new THREE.Mesh(hoodGeo, statueMat);
+      hood.position.y = 1.8 + 3.2 + 0.45 - 0.62;
+      hood.castShadow = true;
+      statueGroup.add(hood);
+
+      const sword = new THREE.Mesh(swordGeo, statueMat);
+      sword.position.set(0, 1.8 + 1.4 - 0.62, 0.65);
+      sword.castShadow = true;
+      statueGroup.add(sword);
+
+      this.group.add(statueGroup);
+    }
+
+    // 3. Torn Heraldic Banners hanging from colonnade
+    const emberTex = this.track(emberBannerTexture());
+    const hollowTex = this.track(hollowBannerTexture());
+    const bannerGeo = this.track(new THREE.PlaneGeometry(1.8, 4.6, 1, 8));
+
+    const emberMat = this.track(
+      new THREE.MeshStandardMaterial({
+        map: emberTex,
+        roughness: 0.85,
+        side: THREE.DoubleSide,
+      }),
+    );
+    const hollowMat = this.track(
+      new THREE.MeshStandardMaterial({
+        map: hollowTex,
+        roughness: 0.85,
+        side: THREE.DoubleSide,
+      }),
+    );
+
+    const emberPositions: [number, number, number][] = [
+      [-10.2, 7.2, 5.2],
+      [-5.2, 7.2, 10.2],
+    ];
+    for (const [x, y, z] of emberPositions) {
+      const banner = new THREE.Mesh(bannerGeo, emberMat);
+      banner.position.set(x, y, z);
+      banner.lookAt(0, y, 0);
+      banner.castShadow = true;
+      this.banners.push(banner);
+      this.group.add(banner);
+    }
+
+    const hollowPositions: [number, number, number][] = [
+      [10.2, 7.2, -5.2],
+      [5.2, 7.2, -10.2],
+    ];
+    for (const [x, y, z] of hollowPositions) {
+      const banner = new THREE.Mesh(bannerGeo, hollowMat);
+      banner.position.set(x, y, z);
+      banner.lookAt(0, y, 0);
+      banner.castShadow = true;
+      this.banners.push(banner);
+      this.group.add(banner);
+    }
+  }
+
   private buildParticles(dustCount: number, emberCount: number): void {
     this.disposeParticles();
     const sprite = this.track(sparkTexture());
@@ -508,6 +686,33 @@ export class CastleHall {
         }
       }
       attribute.needsUpdate = true;
+    }
+
+    // 1. Subtle banner wave in the cathedral draft
+    for (let i = 0; i < this.banners.length; i += 1) {
+      const b = this.banners[i];
+      b.rotation.z = Math.sin(this.elapsed * 1.5 + i * 1.2) * 0.035;
+    }
+
+    // 2. Distant cathedral thunderstorm lightning
+    this.lightningTimer -= delta;
+    if (this.lightningTimer <= 0) {
+      this.lightningTimer = 8 + Math.random() * 12;
+      this.lightningFlash = 0.28;
+    }
+    if (this.lightningFlash > 0) {
+      this.lightningFlash -= delta;
+      const flash = Math.max(0, this.lightningFlash);
+      const intensity = Math.sin(flash * 35) > 0.1 ? 1.8 : 0.4;
+      this.fillLight.intensity = this.look.fill.intensity + intensity * 0.6;
+      if (this.roseWindow) {
+        (this.roseWindow.material as THREE.MeshBasicMaterial).opacity = 0.95 + intensity * 0.3;
+      }
+    } else {
+      this.fillLight.intensity = this.look.fill.intensity;
+      if (this.roseWindow) {
+        (this.roseWindow.material as THREE.MeshBasicMaterial).opacity = 0.95;
+      }
     }
 
     const shaftPeak = this.look.shaft.opacity;

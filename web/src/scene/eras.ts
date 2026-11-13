@@ -26,7 +26,7 @@ import type { PieceKind } from "../core/types";
 import type { ArenaTheme } from "./arena";
 import type { PieceAnimationSet } from "../assets/generated";
 
-export type EraId = "classic" | "rome" | "sengoku" | "egypt";
+export type EraId = "requiem" | "classic" | "rome" | "sengoku" | "egypt";
 
 /** Per-kind roster. A missing kind falls back to the classic army's sculpt. */
 export type EraRoster = Partial<Record<PieceKind, PieceAnimationSet>>;
@@ -124,6 +124,23 @@ const SENGOKU_ROSTER: EraRoster = roster("sengoku", ROSTER_KINDS);
 const EGYPT_ROSTER: EraRoster = roster("egypt", ROSTER_KINDS);
 
 export const ERAS: Record<EraId, EraDefinition> = {
+  requiem: {
+    id: "requiem",
+    label: "Requiem of Kings",
+    period: "The Ashen Throne",
+    note: "The eternal dark-fantasy clash: The Ember Court against The Hollow Legion",
+    arena: "ashen",
+    armies: { w: "The Ember Court", b: "The Hollow Legion" },
+    roster: null,
+    titles: {
+      k: "The Ashen King",
+      q: "The Flame Sorceress",
+      b: "The Fire Priest",
+      n: "The Ember Paladin",
+      r: "The Iron Sentinel",
+      p: "The Oathbound Soldier",
+    },
+  },
   classic: {
     id: "classic",
     label: "Age of Kings",
@@ -189,9 +206,9 @@ export const ERAS: Record<EraId, EraDefinition> = {
   },
 };
 
-export const ERA_ORDER: EraId[] = ["classic", "rome", "sengoku", "egypt"];
+export const ERA_ORDER: EraId[] = ["requiem", "classic", "rome", "sengoku", "egypt"];
 
-export const DEFAULT_ERA: EraId = "classic";
+export const DEFAULT_ERA: EraId = "requiem";
 
 export function isEraId(value: unknown): value is EraId {
   return typeof value === "string" && Object.prototype.hasOwnProperty.call(ERAS, value);

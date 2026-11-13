@@ -39,14 +39,14 @@ export const PIECE_HEIGHT: Record<PieceKind, number> = {
 };
 
 export const FACTION_ACCENT: Record<Faction, number> = {
-  w: 0x6ea8ff,
-  b: 0xff5a4a,
+  w: 0xff5a22,
+  b: 0xa855f7,
 };
 
 /** Light that burns along the dissolving edge — one hue per civilisation. */
 const DISSOLVE_EMBER: Record<Faction, number> = {
-  w: 0xa8ccff,
-  b: 0xff7a32,
+  w: 0xff7a33,
+  b: 0xc084fc,
 };
 
 /** Shared uniform block driving one figure's burn-away across all its materials. */
@@ -1153,24 +1153,24 @@ function applyFactionLook(
     // the armour read as shiny plastic. Snap to the nearest valid pole.
     material.metalness = material.metalness >= 0.5 ? 1 : 0;
     applyWear(material);
-    material.emissive = new THREE.Color(color === "w" ? 0x2a4d94 : 0x711a12);
+    material.emissive = new THREE.Color(color === "w" ? 0x5a1804 : 0x350d52);
     material.emissiveIntensity = 0.05;
     material.envMapIntensity = 1.05;
     material.needsUpdate = true;
     return;
   }
   if (color === "w") {
-    material.color.setHex(0xfff2dd);
-    material.roughness = 0.42;
+    material.color.setHex(0x2d2f36);
+    material.roughness = 0.36;
     // Carved bone/ivory is a dielectric, not a 0.1 metal blend.
-    material.metalness = 0;
-    material.emissive = new THREE.Color(0x2a4d94);
+    material.metalness = 0.92;
+    material.emissive = new THREE.Color(0x5a1804);
   } else {
-    material.color.setHex(0x34363d);
-    material.roughness = 0.38;
+    material.color.setHex(0x181a22);
+    material.roughness = 0.44;
     // Blackened forged steel: a real metal, so 1 rather than the 0.55 blend.
-    material.metalness = 1;
-    material.emissive = new THREE.Color(0x711a12);
+    material.metalness = 0.85;
+    material.emissive = new THREE.Color(0x350d52);
   }
   material.emissiveIntensity = 0.05;
   material.envMapIntensity = 1.15;

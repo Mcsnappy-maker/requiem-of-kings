@@ -43,6 +43,9 @@ export function GameShell() {
     // The era names its battleground; an explicit ?arena= still wins.
     arena: review.arena ?? ERAS[review.era ?? DEFAULT_ERA].arena,
     captureCinematics: true,
+    cinematicIntensity: "full",
+    reducedMotion: false,
+    reducedFlashing: false,
     rotateBoard: true,
     rankBadges: true,
     muted: false,
@@ -210,6 +213,9 @@ export function GameShell() {
     engine.setUserQualityPin(qualityPinned);
     engine.setArena(settings.arena);
     engine.setCaptureCinematics(settings.captureCinematics);
+    engine.setCinematicIntensity(settings.cinematicIntensity);
+    engine.setReducedMotion(settings.reducedMotion);
+    engine.setReducedFlashing(settings.reducedFlashing);
     engine.setRotateBoard(settings.rotateBoard);
     engine.setRankBadges(settings.rankBadges);
     audio.setMuted(settings.muted);

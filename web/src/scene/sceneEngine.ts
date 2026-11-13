@@ -100,8 +100,8 @@ const CRY_WEIGHT: Record<PieceKind, { volume: number; rate: number }> = {
  * soul-light for the ivory kingdom, live embers for the Sun Empire.
  */
 const EMBER_COLOR: Record<Faction, number> = {
-  w: 0xbcd8ff,
-  b: 0xff8a3c,
+  w: 0xff8a3c,
+  b: 0xc084fc,
 };
 
 /**
@@ -450,6 +450,9 @@ export class SceneEngine {
   /** Travels with the camera so the near face of every figure stays readable. */
   private cameraLamp: THREE.DirectionalLight;
   private captureCinematics = true;
+  private cinematicIntensity: "full" | "short" | "skip" = "full";
+  private reducedMotion = false;
+  private reducedFlashing = false;
   private rotateBoard = true;
   private rankBadges = true;
   private interactive = true;
@@ -1857,6 +1860,10 @@ export class SceneEngine {
   ): Promise<void> {
     const profile = STRIKES[attacker.kind];
     const settings = QUALITY_SETTINGS[this.preset];
+    const isShort = this.cinematicIntensity === "short";
+    const motionAllowed = !this.reducedMotion;
+    const flashAllowed = !this.reducedFlashing;
+
     const direction = to.clone().sub(from).normalize();
     const standoff = to.clone().sub(direction.clone().multiplyScalar(TILE * 0.52));
     // En passant kills a pawn on a different square than the one moved to.
@@ -1866,37 +1873,42 @@ export class SceneEngine {
     blow.normalize();
 
     const originalFov = this.camera.fov;
-    void this.tweens.to({
-      duration: 0.22,
-      easing: Ease.outCubic,
-      onUpdate: (t) => {
-        this.camera.fov = originalFov - profile.zoom * t;
-        this.camera.updateProjectionMatrix();
-      },
-    });
+    const zoomPunch = motionAllowed ? (isShort ? profile.zoom * 0.5 : profile.zoom) : 0;
+    if (zoomPunch > 0) {
+      void this.tweens.to({
+        duration: isShort ? 0.15 : 0.22,
+        easing: Ease.outCubic,
+        onUpdate: (t) => {
+          this.camera.fov = originalFov - zoomPunch * t;
+          this.camera.updateProjectionMatrix();
+        },
+      });
+    }
 
     // Both fighters square up: the attacker charges in, the defender turns to
     // meet its killer so the blow never lands on the back of a head.
+    const chargeSpeed = isShort ? profile.charge * 1.4 : profile.charge;
     await Promise.all([
       // Pressing forward into the blow: the same march, a quicker cadence.
-      this.glide(attacker, from, standoff, attacker.kind === "n", profile.charge),
-      victim.turnTowards(standoff, this.tweens, 0.3),
+      this.glide(attacker, from, standoff, attacker.kind === "n", chargeSpeed),
+      victim.turnTowards(standoff, this.tweens, isShort ? 0.2 : 0.3),
     ]);
     attacker.faceTowards(victimSpot);
     // Arrival beat: the march has stopped and the figure is squared up on its
     // target. A held breath here is what makes the blow read as its own action
-    // rather than the tail of the walk. The heavier the rank, the longer it
-    // stands there before it commits.
-    await wait(profile.wind);
+    // rather than the tail of the walk.
+    const windWait = isShort ? profile.wind * 0.4 : profile.wind;
+    if (windWait > 0) await wait(windWait);
 
     // Sentence before execution: the crown drops a column of light on the
-    // condemned and the hall is told what is coming.
-    if (profile.pillar) await this.passSentence(victim, victimSpot, profile.pillar, settings.postFx);
+    // condemned and the hall is told what is coming (skipped in short intensity).
+    if (profile.pillar && !isShort) {
+      await this.passSentence(victim, victimSpot, profile.pillar, settings.postFx && flashAllowed);
+    }
 
     // Strike: the skeletal attack clip when the rig carries one, otherwise a
     // wind-up and lunge driven off the runtime node so the board anchor stays
-    // put. Note this asks for the clip itself, not merely for a rig — a figure
-    // whose strike failed to download must still visibly attack.
+    // put.
     const strike = attacker.hasClip("attack") ? attacker.playAttack() : null;
     if (profile.swing > 0) {
       // The weapon is heard coming round just before it arrives.
@@ -1916,17 +1928,29 @@ export class SceneEngine {
     audio.play("capture", Math.min(1, 0.85 * power));
     // The board itself is capped: past a point the tiles stop reading as stone.
     this.strikeImpact(strikeSquare, Math.min(1.5, power));
-    this.effects.spawnFlash(impact, Math.min(4.4, 2.2 * power), 0.24);
-    this.effects.spawnBurst(impact, 0xffc978, Math.round(settings.captureParticles * power), {
+
+    // Faction-tuned lighting and particle bursts:
+    // White = The Ember Court (molten fire, warm gold)
+    // Black = The Hollow Legion (spectral violet, necrotic chill)
+    const isEmber = attacker.color === "w";
+    const burstColor = isEmber ? 0xffb347 : 0xc084fc;
+    const flashIntensity = flashAllowed ? Math.min(4.4, 2.2 * power) : Math.min(1.2, 0.8 * power);
+    this.effects.spawnFlash(impact, flashIntensity, flashAllowed ? 0.24 : 0.12);
+    this.effects.spawnBurst(impact, burstColor, Math.round(settings.captureParticles * power), {
       speed: 3.4 * (0.9 + power * 0.1),
       life: 0.75,
     });
-    this.shake.add(Math.min(1, 0.55 * power));
+    if (motionAllowed) {
+      this.shake.add(Math.min(1, 0.55 * power));
+    }
 
     // Steel: the cut hangs in the air for a couple of frames after the blade.
     if (profile.slash) {
+      const slashColor = isEmber
+        ? (attacker.kind === "k" ? 0xffdf9a : 0xff9e3b)
+        : (attacker.kind === "k" ? 0xd8b4fe : 0xa855f7);
       void spawnSlash(this.scene, this.tweens, impact, {
-        color: profile.slash.color,
+        color: slashColor,
         size: profile.slash.size,
         tilt: -0.55 - this.strikeRng.next() * 0.35,
       });
@@ -1934,9 +1958,10 @@ export class SceneEngine {
 
     // Weight: a blow that carries into the floor sends a wave across the stone.
     if (profile.wave) {
+      const waveColor = isEmber ? 0xff7a22 : 0x8b5cf6;
       audio.groundSlam({ pan: this.stereoPan(victimSpot), volume: Math.min(1, power * 0.6) });
       void spawnGroundWave(this.scene, this.tweens, victimSpot, {
-        color: profile.wave.color,
+        color: waveColor,
         radius: profile.wave.radius,
         height: BOARD_TOP + 0.03,
         echo: profile.aftershock > 0.2,
@@ -1949,7 +1974,7 @@ export class SceneEngine {
         life: 1.2,
         speed: 2.4,
         rise: 0.1,
-        color: 0x9c8f7d,
+        color: isEmber ? 0x9c8f7d : 0x7c738a,
         opacity: 0.5,
       });
     }
@@ -1972,40 +1997,36 @@ export class SceneEngine {
 
     // Hitstop: on a heavy blow the whole beat holds for a frame or two on
     // contact, which is what makes the hit feel like it connected with mass.
-    if (profile.hold > 0) await wait(profile.hold);
+    if (profile.hold > 0 && !isShort) await wait(profile.hold);
 
     if (!strike || strike.duration === 0) this.recover(attacker, direction, profile.heft);
 
     // The hall answers a beat later.
-    if (profile.aftershock > 0) void this.aftershock(strikeSquare, profile.aftershock);
+    if (profile.aftershock > 0 && motionAllowed) void this.aftershock(strikeSquare, profile.aftershock);
 
     // The defender goes down while the attacker finishes following through.
     const recovery = strike ? Math.min(0.45, Math.max(0, strike.duration - strike.impact)) : 0.18;
-    await Promise.all([this.slay(victim, blow), wait(recovery)]);
+    await Promise.all([this.slay(victim, blow), wait(isShort ? recovery * 0.6 : recovery)]);
 
-    void this.tweens.to({
-      duration: 0.45,
-      easing: Ease.outCubic,
-      onUpdate: (t) => {
-        this.camera.fov = originalFov - profile.zoom * (1 - t);
-        this.camera.updateProjectionMatrix();
-      },
-    });
+    if (zoomPunch > 0) {
+      void this.tweens.to({
+        duration: isShort ? 0.25 : 0.45,
+        easing: Ease.outCubic,
+        onUpdate: (t) => {
+          this.camera.fov = originalFov - zoomPunch * (1 - t);
+          this.camera.updateProjectionMatrix();
+        },
+      });
+    }
 
     // The corpse is thrown clear in smoke as the victor takes the square.
     await Promise.all([
       this.banish(victim, blow),
       // The last stride onto the square it has just cleared.
-      this.glide(attacker, standoff, to, false, 1.5),
+      this.glide(attacker, standoff, to, false, isShort ? 2.0 : 1.5),
     ]);
     audio.play("place", 0.5);
   }
-
-  /**
-   * The crown's prerogative: before the blow, a column of light is dropped on
-   * the condemned, a bell is rung over it, and motes are drawn up off the stone
-   * around its feet. Nothing else on the board is allowed this beat.
-   */
   private async passSentence(
     victim: PieceView,
     at: THREE.Vector3,
@@ -2077,21 +2098,26 @@ export class SceneEngine {
     if (blow.lengthSq() < 1e-6) blow.set(0, 0, 1);
     blow.normalize();
 
+    const isShort = this.cinematicIntensity === "short";
+    const motionAllowed = !this.reducedMotion;
     const spell = spellProfile(attacker.kind);
     const originalFov = this.camera.fov;
-    void this.tweens.to({
-      duration: 0.28,
-      easing: Ease.outCubic,
-      onUpdate: (t) => {
-        this.camera.fov = originalFov - spell.zoom * t;
-        this.camera.updateProjectionMatrix();
-      },
-    });
+    const zoomPunch = motionAllowed ? (isShort ? spell.zoom * 0.5 : spell.zoom) : 0;
+    if (zoomPunch > 0) {
+      void this.tweens.to({
+        duration: isShort ? 0.18 : 0.28,
+        easing: Ease.outCubic,
+        onUpdate: (t) => {
+          this.camera.fov = originalFov - zoomPunch * t;
+          this.camera.updateProjectionMatrix();
+        },
+      });
+    }
 
     // The caster levels its staff; the target sees what is coming for it.
     await Promise.all([
-      attacker.turnTowards(victimSpot, this.tweens, 0.34),
-      victim.turnTowards(from, this.tweens, 0.32),
+      attacker.turnTowards(victimSpot, this.tweens, isShort ? 0.22 : 0.34),
+      victim.turnTowards(from, this.tweens, isShort ? 0.2 : 0.32),
     ]);
     attacker.faceTowards(victimSpot);
 
@@ -2099,7 +2125,8 @@ export class SceneEngine {
     // right up to the frame the clip would have landed its blow. The sorceress
     // holds hers longer, and holds far more of it.
     const cast = attacker.hasClip("attack") ? attacker.playAttack() : null;
-    const gather = (cast && cast.duration > 0 ? Math.max(0.34, cast.impact) : 0.55) + spell.gather;
+    const gatherBase = cast && cast.duration > 0 ? Math.max(0.34, cast.impact) : 0.55;
+    const gather = (isShort ? gatherBase * 0.6 : gatherBase) + (isShort ? spell.gather * 0.4 : spell.gather);
     // No cast clip on this rig: the body does the casting instead of the
     // skeleton — it leans back over the fire it is gathering.
     const byHand = !cast || cast.duration <= 0;
@@ -2109,7 +2136,7 @@ export class SceneEngine {
     if (byHand) this.castRelease(attacker, blow);
 
     const impact = victimSpot.clone().setY(0.62);
-    if (spell.bolts > 1) {
+    if (spell.bolts > 1 && !isShort) {
       // A volley: leaders go first and break on the body, the killing bolt lands
       // behind them and is the one that takes the square.
       const leaders: Promise<void>[] = [];
@@ -2120,29 +2147,30 @@ export class SceneEngine {
       await this.throwFireball(attacker, impact, { size: 0.64 });
       await Promise.all(leaders);
     } else {
-      await this.throwFireball(attacker, impact);
+      await this.throwFireball(attacker, impact, { size: spell.bolts > 1 ? 0.58 : undefined });
     }
     this.spellBurst(attacker.color, impact, strikeSquare, spell.blast, spell.ring);
 
     // Dead before the caster has taken a single step.
     await this.slay(victim, blow);
 
-    void this.tweens.to({
-      duration: 0.45,
-      easing: Ease.outCubic,
-      onUpdate: (t) => {
-        this.camera.fov = originalFov - spell.zoom * (1 - t);
-        this.camera.updateProjectionMatrix();
-      },
-    });
+    if (zoomPunch > 0) {
+      void this.tweens.to({
+        duration: isShort ? 0.25 : 0.45,
+        easing: Ease.outCubic,
+        onUpdate: (t) => {
+          this.camera.fov = originalFov - zoomPunch * (1 - t);
+          this.camera.updateProjectionMatrix();
+        },
+      });
+    }
 
     // The body is cleared off the board, and only then is the square walked to.
     await this.banish(victim, blow);
     if (cast) attacker.playIdle(0.2);
-    await this.glide(attacker, from, to, false, 1.15);
+    await this.glide(attacker, from, to, false, isShort ? 1.6 : 1.15);
     audio.play("place", 0.5);
   }
-
   /** Caster with no clip: the shoulders go back over the gathering fire. */
   private async castWind(attacker: PieceView, duration: number): Promise<void> {
     await this.tweens.to({
@@ -3628,6 +3656,20 @@ export class SceneEngine {
 
   setCaptureCinematics(enabled: boolean): void {
     this.captureCinematics = enabled;
+  }
+
+  setCinematicIntensity(intensity: "full" | "short" | "skip"): void {
+    this.cinematicIntensity = intensity;
+    this.captureCinematics = intensity !== "skip";
+  }
+
+  setReducedMotion(enabled: boolean): void {
+    this.reducedMotion = enabled;
+    this.shake.setScale(enabled ? 0 : 1);
+  }
+
+  setReducedFlashing(enabled: boolean): void {
+    this.reducedFlashing = enabled;
   }
 
   setRotateBoard(enabled: boolean): void {
