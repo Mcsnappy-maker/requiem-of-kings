@@ -16,6 +16,10 @@ import {
 } from "../net/protocol";
 import { buildJoinLink, buildSeatLink, clearPrivateFragment, loadSeat, readPrivateIntent, saveSeat } from "../net/privateLink";
 import { createRemoteMatch } from "../net/matchApi";
+import { OnlineClient, relayAvailable } from "../net/onlineClient";
+import { OnlineBridge } from "../net/onlineBridge";
+import { GameController } from "../core/gameController";
+import type { DurableGameState } from "../net/protocol";
 
 // Regression coverage for the multiplayer layer. Every case below maps to a
 // real defect or a real invariant verified during the live two-client test.
@@ -208,6 +212,7 @@ const waitingState = () => ({
 const createdMatch = () => ({ matchId: MATCH_ID, hostToken: TEST_TOKEN, joinToken: JOIN_TOKEN, state: waitingState() });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
   vi.restoreAllMocks();
@@ -477,5 +482,372 @@ describe("private match HTTP creation", () => {
     const fetch = mockCreate();
     await expect(createRemoteMatch(input as never)).rejects.toThrow("Invalid match request");
     expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+// Real client/bridge with only the browser network boundary replaced.
+class TestSocket {
+  static OPEN = 1;
+  static CONNECTING = 0;
+  static instances: TestSocket[] = [];
+  readyState = 0;
+  sent: Record<string, unknown>[] = [];
+  onopen: (() => void) | null = null;
+  onclose: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  onmessage: ((event: { data: string }) => void) | null = null;
+  constructor(readonly url: string) { TestSocket.instances.push(this); }
+  open() { this.readyState = 1; this.onopen?.(); }
+  receive(message: unknown) { this.onmessage?.({ data: JSON.stringify(message) }); }
+  send(raw: string) { this.sent.push(JSON.parse(raw)); }
+  close() { this.readyState = 3; this.onclose?.(); }
+}
+const activeState = (): DurableGameState => ({
+  ...waitingState(), status: "active", stateVersion: 1, turn: "w", started: true,
+  players: [{ color: "w", name: "Host" }, { color: "b", name: "Guest" }],
+});
+const afterE4 = (): DurableGameState => ({
+  ...activeState(), stateVersion: 2, turn: "b",
+  fen: "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+  moves: [{ ply: 1, color: "w", from: "e2", to: "e4", promotion: null, san: "e4", fen: "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1" }],
+});
+function clientEnvironment(hash = "") {
+  const browser = installBrowser(hash);
+  vi.useFakeTimers();
+  vi.stubEnv("VITE_MULTIPLAYER_HTTP_URL", "https://api.example");
+  vi.stubEnv("VITE_MULTIPLAYER_WS_URL", "wss://socket.example");
+  vi.stubGlobal("WebSocket", TestSocket);
+  TestSocket.instances = [];
+  const fetch = vi.fn(async (_url: string, _options?: RequestInit) => new Response(JSON.stringify(createdMatch()), { status: 201 }));
+  vi.stubGlobal("fetch", fetch);
+  return { ...browser, fetch };
+}
+function connectHost(state = activeState()) {
+  const client = new OnlineClient();
+  client.resume({ kind: "seat", matchId: MATCH_ID, token: TEST_TOKEN });
+  const socket = TestSocket.instances[TestSocket.instances.length - 1]!;
+  socket.open();
+  socket.receive({ t: "seated", seat: "host", color: "w", state });
+  return { client, socket };
+}
+async function drainBridge() { await vi.advanceTimersByTimeAsync(0); }
+
+describe("durable client state machine", () => {
+  it("allows another host attempt after an HTTP outage", async () => {
+    const browser = clientEnvironment();
+    browser.fetch.mockRejectedValueOnce(new Error(TEST_TOKEN));
+    const client = new OnlineClient();
+    await expect(client.host("Host", "w")).rejects.toThrow("Could not create match");
+    await expect(client.host("Host", "w")).resolves.toMatchObject({ matchId: MATCH_ID });
+    client.dispose();
+  });
+  it("retries a socket that never opens instead of leaving the board connecting forever", () => {
+    clientEnvironment();
+    const client = new OnlineClient();
+    client.resume({ kind: "seat", matchId: MATCH_ID, token: TEST_TOKEN });
+    vi.advanceTimersByTime(10_500);
+    expect(TestSocket.instances).toHaveLength(2);
+    expect(TestSocket.instances[0].readyState).toBe(3);
+    client.dispose();
+  });
+  it("keeps the unresolved request when manually resuming the same seat", () => {
+    clientEnvironment();
+    const { client, socket } = connectHost();
+    client.sendMove("e2", "e4", null);
+    const move = socket.sent[1];
+    socket.close();
+    client.resume();
+    const retry = TestSocket.instances[1];
+    retry.open();
+    retry.receive({ t: "seated", seat: "host", color: "w", state: activeState() });
+    expect(retry.sent[1]).toEqual(move);
+    client.dispose();
+  });
+  it("creates over HTTP, persists host immediately, then authenticates the match socket", async () => {
+    const browser = clientEnvironment();
+    const client = new OnlineClient();
+    const hosted = await client.host("Host", "w");
+    expect(browser.fetch.mock.calls[0]?.[0]).toBe("https://api.example/api/matches");
+    expect(loadSeat(MATCH_ID)?.token).toBe(TEST_TOKEN);
+    expect(hosted.joinLink).toBe(`https://game.example/chess/#match=${MATCH_ID}&join=${JOIN_TOKEN}`);
+    expect(client.getReturnLink()).toBe(`https://game.example/chess/#match=${MATCH_ID}&seat=${TEST_TOKEN}`);
+    const socket = TestSocket.instances[0];
+    expect(socket.url).toBe(`wss://socket.example/api/matches/${MATCH_ID}/ws`);
+    expect(socket.sent).toEqual([]);
+    socket.open();
+    expect(socket.sent).toEqual([{ t: "resume", v: 2, token: TEST_TOKEN }]);
+    expect(client.getStatus()).toBe("connecting");
+    socket.receive({ t: "seated", seat: "host", color: "w", state: waitingState() });
+    expect(client.getStatus()).toBe("connected");
+    client.dispose();
+  });
+  it("claims once and replaces the private join fragment with a saved guest seat", () => {
+    const browser = clientEnvironment(`#match=${MATCH_ID}&join=${JOIN_TOKEN}`);
+    const client = new OnlineClient();
+    client.claim({ kind: "join", matchId: MATCH_ID, token: JOIN_TOKEN }, "Guest");
+    const socket = TestSocket.instances[0];
+    socket.open();
+    expect(socket.sent).toEqual([{ t: "claim", v: 2, token: JOIN_TOKEN, name: "Guest" }]);
+    socket.receive({ t: "seated", seat: "guest", color: "b", state: activeState(), seatToken: TEST_TOKEN });
+    expect(browser.location.hash).toBe("");
+    expect(loadSeat(MATCH_ID)).toEqual({ kind: "seat", matchId: MATCH_ID, token: TEST_TOKEN });
+    expect(JSON.stringify([...browser.values])).not.toContain(JOIN_TOKEN);
+    socket.close();
+    vi.advanceTimersByTime(500);
+    const retry = TestSocket.instances[1];
+    retry.open();
+    expect(retry.sent).toEqual([{ t: "resume", v: 2, token: TEST_TOKEN }]);
+    client.dispose();
+  });
+  it("reopens a locally saved seat without any URL credentials", async () => {
+    clientEnvironment();
+    const first = new OnlineClient();
+    await first.host("Host", "w");
+    first.dispose();
+    const reopened = new OnlineClient();
+    expect(reopened.hasResumableSeat()).toBe(true);
+    expect(reopened.resume()).toBe(true);
+    const socket = TestSocket.instances[TestSocket.instances.length - 1]!;
+    socket.open();
+    expect(socket.sent[0]).toEqual({ t: "resume", v: 2, token: TEST_TOKEN });
+    reopened.dispose();
+  });
+  it("resumes a return link on a new browser and clears it before persistence", () => {
+    const browser = clientEnvironment(`#match=${MATCH_ID}&seat=${TEST_TOKEN}`);
+    const intent = readPrivateIntent(browser.location)!;
+    const client = new OnlineClient();
+    expect(client.resume(intent as Extract<typeof intent, { kind: "seat" }>)).toBe(true);
+    expect(browser.events.slice(0, 2)).toEqual(["clear", "store"]);
+    expect(browser.location.hash).toBe("");
+    TestSocket.instances[0].open();
+    expect(TestSocket.instances[0].sent[0]).toEqual({ t: "resume", v: 2, token: TEST_TOKEN });
+    client.dispose();
+  });
+  it("retains a move UUID through reconnect and waits for authentication before retrying", () => {
+    clientEnvironment();
+    const { client, socket } = connectHost();
+    const id = client.sendMove("e2", "e4", null);
+    expect(id).toMatch(/^[a-f0-9-]{36}$/);
+    const move = { t: "move", v: 2, requestId: id, expectedVersion: 1, from: "e2", to: "e4", promotion: null };
+    expect(socket.sent[1]).toEqual(move);
+    expect(() => client.sendMove("d2", "d4", null)).toThrow();
+    socket.close();
+    expect(client.getStatus()).toBe("reconnecting");
+    vi.advanceTimersByTime(500);
+    const retry = TestSocket.instances[1];
+    retry.open();
+    expect(retry.sent).toEqual([{ t: "resume", v: 2, token: TEST_TOKEN }]);
+    retry.receive({ t: "seated", seat: "host", color: "w", state: activeState() });
+    expect(retry.sent[1]).toEqual(move);
+    retry.receive({ t: "state", state: afterE4() });
+    expect(client.hasPendingMove()).toBe(false);
+    client.dispose();
+  });
+  it("does not resend an acknowledged move after a lost response", () => {
+    clientEnvironment();
+    const { client, socket } = connectHost();
+    client.sendMove("e2", "e4", null);
+    socket.close();
+    vi.advanceTimersByTime(500);
+    const retry = TestSocket.instances[1];
+    retry.open();
+    retry.receive({ t: "seated", seat: "host", color: "w", state: afterE4() });
+    expect(retry.sent).toHaveLength(1);
+    expect(client.hasPendingMove()).toBe(false);
+    client.dispose();
+  });
+  it("retries an unanswered move with the identical envelope and never sends legacy heartbeats", () => {
+    clientEnvironment();
+    const { client, socket } = connectHost();
+    client.sendMove("e2", "e4", null);
+    const move = socket.sent[1];
+    // An equal-version snapshot does not acknowledge this request.
+    socket.receive({ t: "state", state: activeState() });
+    expect(client.hasPendingMove()).toBe(true);
+    vi.advanceTimersByTime(10_500);
+    const retry = TestSocket.instances[1];
+    retry.open();
+    retry.receive({ t: "seated", seat: "host", color: "w", state: activeState() });
+    expect(retry.sent).toEqual([{ t: "resume", v: 2, token: TEST_TOKEN }, move]);
+    retry.receive({ t: "state", state: afterE4() });
+    vi.advanceTimersByTime(60_000);
+    expect(retry.sent).toHaveLength(2);
+    expect(TestSocket.instances).toHaveLength(2);
+    client.dispose();
+  });
+  it("ignores malformed, wrong-match, and stale snapshots", () => {
+    clientEnvironment();
+    const { client, socket } = connectHost();
+    socket.receive({ t: "state", state: { ...afterE4(), matchId: OTHER_MATCH_ID } });
+    socket.receive({ t: "state", state: { ...afterE4(), stateVersion: "2" } });
+    expect(client.getState()).toEqual(activeState());
+    socket.receive({ t: "state", state: afterE4() });
+    socket.receive({ t: "state", state: activeState() });
+    expect(client.getState()).toEqual(afterE4());
+    client.dispose();
+  });
+  it("keeps credentials out of logs when socket construction or send fails", () => {
+    clientEnvironment();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const { client, socket } = connectHost();
+    vi.spyOn(socket, "send").mockImplementationOnce(() => { throw new Error(TEST_TOKEN); });
+    client.sendMove("e2", "e4", null);
+    vi.stubGlobal("WebSocket", class { constructor() { throw new Error(TEST_TOKEN); } });
+    vi.advanceTimersByTime(500);
+    expect(client.getStatus()).toBe("reconnecting");
+    expect(warn).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+    client.dispose();
+  });
+  it("does not open a socket if hosting was disposed while HTTP was pending", async () => {
+    const browser = clientEnvironment();
+    let finish!: (value: Response) => void;
+    browser.fetch.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    const client = new OnlineClient();
+    const hosted = client.host("Host", "w");
+    client.dispose();
+    finish(new Response(JSON.stringify(createdMatch()), { status: 201 }));
+    await expect(hosted).rejects.toThrow("Could not open private match");
+    expect(TestSocket.instances).toHaveLength(0);
+    expect(client.getState()).toBeNull();
+  });
+  it("treats seat replacement as terminal and ignores callbacks from the old socket", () => {
+    clientEnvironment();
+    const { client, socket } = connectHost();
+    const staleMessage = socket.onmessage!;
+    socket.receive({ t: "error", code: "seat-replaced", fatal: true });
+    expect(client.getStatus()).toBe("error");
+    expect(() => client.sendMove("e2", "e4", null)).toThrow();
+    expect(client.resume()).toBe(false);
+    staleMessage({ data: JSON.stringify({ t: "seated", seat: "host", color: "w", state: activeState() }) });
+    vi.advanceTimersByTime(60_000);
+    expect(client.getStatus()).toBe("error");
+    expect(TestSocket.instances).toHaveLength(1);
+    client.dispose();
+  });
+  it("never uses a room code or the legacy/page origin as socket authority", () => {
+    clientEnvironment();
+    vi.stubEnv("VITE_MULTIPLAYER_WS_URL", "");
+    vi.stubEnv("VITE_MULTIPLAYER_URL", "wss://legacy.example");
+    expect(relayAvailable()).toBe(false);
+    const client = new OnlineClient();
+    client.join("Guest", "FQQVR");
+    expect(TestSocket.instances).toHaveLength(0);
+    client.dispose();
+  });
+  it.each([`wss://socket.example/?token=${TEST_TOKEN}`, `wss://${TEST_TOKEN}@socket.example`, "ws://remote.example", "https://socket.example"])("rejects unsafe WS configuration without exposing it", (url) => {
+    clientEnvironment();
+    vi.stubEnv("VITE_MULTIPLAYER_WS_URL", url);
+    const client = new OnlineClient();
+    expect(client.resume({ kind: "seat", matchId: MATCH_ID, token: TEST_TOKEN })).toBe(false);
+    expect(TestSocket.instances).toHaveLength(0);
+    expect(client.getStatus()).toBe("error");
+    client.dispose();
+  });
+});
+
+describe("durable bridge canonical reconciliation", () => {
+  function setup() {
+    clientEnvironment();
+    const { client, socket } = connectHost();
+    const controller = new GameController();
+    const animator = vi.fn(async () => {});
+    controller.setAnimator(animator);
+    const bridge = new OnlineBridge(client, controller, { onResync: vi.fn(), onNotice: vi.fn() });
+    return { client, socket, controller, animator, bridge, dispose() { bridge.dispose(); client.dispose(); controller.stop(); } };
+  }
+  it("seeds a board after lobby handoff and permits only one server-first move", async () => {
+    const test = setup();
+    expect(test.controller.getSnapshot().mode).toBe("online");
+    expect(test.controller.isNetworkReady()).toBe(true);
+    expect(test.bridge.submitMove("e2", "e4")).toBe(true);
+    expect(test.controller.pieceAt("e2")?.kind).toBe("p");
+    expect(test.controller.isNetworkReady()).toBe(false);
+    expect(test.bridge.submitMove("d2", "d4")).toBe(false);
+    test.socket.receive({ t: "state", state: afterE4() });
+    await drainBridge();
+    expect(test.controller.pieceAt("e4")?.kind).toBe("p");
+    expect(test.animator).toHaveBeenCalledTimes(1);
+    test.socket.receive({ t: "state", state: afterE4() });
+    await drainBridge();
+    expect(test.animator).toHaveBeenCalledTimes(1);
+    test.dispose();
+  });
+  it("replaces the board from a mismatch snapshot before allowing another input", async () => {
+    const test = setup();
+    test.bridge.submitMove("e2", "e4");
+    test.socket.receive({ t: "error", code: "state-version-mismatch", fatal: false, state: afterE4() });
+    expect(test.controller.isNetworkReady()).toBe(false);
+    await drainBridge();
+    expect(test.controller.getSnapshot().fen).toBe(afterE4().fen);
+    expect(test.client.hasPendingMove()).toBe(false);
+    expect(test.animator).not.toHaveBeenCalled();
+    test.dispose();
+  });
+  it("releases a rejected move against canonical state and gives the next intent a new UUID", async () => {
+    const test = setup();
+    test.bridge.submitMove("e2", "e5");
+    const rejected = test.socket.sent[1];
+    test.socket.receive({ t: "error", code: "illegal-move", fatal: false });
+    expect(test.controller.isNetworkReady()).toBe(false);
+    await drainBridge();
+    expect(test.controller.getSnapshot().fen).toBe(START_FEN);
+    expect(test.controller.isNetworkReady()).toBe(true);
+    expect(test.bridge.submitMove("e2", "e4")).toBe(true);
+    expect(test.socket.sent[2].requestId).not.toBe(rejected.requestId);
+    expect(test.socket.sent[2].expectedVersion).toBe(1);
+    test.dispose();
+  });
+  it("serializes duplicate snapshots arriving while an animation is unresolved", async () => {
+    const test = setup();
+    let finish!: () => void;
+    test.animator.mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+    test.bridge.submitMove("e2", "e4");
+    test.socket.receive({ t: "state", state: afterE4() });
+    await drainBridge();
+    test.socket.receive({ t: "state", state: afterE4() });
+    expect(test.animator).toHaveBeenCalledTimes(1);
+    expect(test.controller.isNetworkReady()).toBe(false);
+    finish();
+    await drainBridge();
+    expect(test.animator).toHaveBeenCalledTimes(1);
+    expect(test.controller.getSnapshot().fen).toBe(afterE4().fen);
+    expect(test.controller.isNetworkReady()).toBe(true);
+    test.dispose();
+  });
+  it("opens completed matches at the final position with control disabled", async () => {
+    clientEnvironment();
+    const state: DurableGameState = { ...afterE4(), status: "complete", over: true, result: { winner: null, reason: "draw" } };
+    const { client } = connectHost(state);
+    const controller = new GameController();
+    const bridge = new OnlineBridge(client, controller, { onResync: vi.fn(), onNotice: vi.fn() });
+    expect(controller.getSnapshot().fen).toBe(state.fen);
+    expect(controller.getSnapshot().result).toEqual({ winner: null, reason: "draw" });
+    expect(controller.isNetworkReady()).toBe(false);
+    expect(bridge.submitMove("e2", "e4")).toBe(false);
+    bridge.dispose(); client.dispose(); controller.stop();
+  });
+  it("never reopens control after seat replacement or a queued snapshot", async () => {
+    const test = setup();
+    test.socket.receive({ t: "state", state: afterE4() });
+    test.socket.receive({ t: "error", code: "seat-replaced", fatal: true });
+    await drainBridge();
+    expect(test.controller.isNetworkReady()).toBe(false);
+    expect(test.bridge.submitMove("e2", "e4")).toBe(false);
+    test.dispose();
+  });
+  it("locks input on disconnect and resumes at the canonical position without replaying old moves", async () => {
+    const test = setup();
+    test.socket.close();
+    expect(test.controller.isNetworkReady()).toBe(false);
+    vi.advanceTimersByTime(500);
+    const retry = TestSocket.instances[1];
+    retry.open();
+    retry.receive({ t: "seated", seat: "host", color: "w", state: afterE4() });
+    await drainBridge();
+    expect(test.controller.getSnapshot().fen).toBe(afterE4().fen);
+    expect(test.animator).not.toHaveBeenCalled();
+    test.dispose();
   });
 });
