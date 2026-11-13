@@ -279,6 +279,28 @@ describe("authoritative moves and socket recovery", () => {
     expect((await stored(match.matchId)).moves).toEqual([]);
   });
 
+  it("ignores a queued move from the replaced server socket after same-seat takeover", async () => {
+    const match = await activeMatch();
+    const before = await stored(match.matchId);
+    const replacement = await connect(match.matchId);
+    const seated = next(replacement);
+    const replaced = next(match.host);
+    await runInDurableObject(room(match.matchId), async (instance, ctx) => {
+      const oldHost = ctx.getWebSockets().find((socket) => socket.deserializeAttachment()?.seat === "host")!;
+      const newHost = ctx.getWebSockets().find((socket) => !socket.deserializeAttachment())!;
+      await instance.webSocketMessage(newHost, JSON.stringify({ t: "resume", v: 2, token: match.hostToken }));
+      // Deliver an already queued callback directly: client.send() could simply
+      // refuse a closed connection and never exercise the room's protection.
+      await instance.webSocketMessage(oldHost, JSON.stringify(move()));
+    });
+    expect(await seated).toMatchObject({ t: "seated", seat: "host" });
+    expect(await replaced).toEqual({ t: "error", code: "seat-replaced", fatal: true });
+    expect(await stored(match.matchId)).toEqual(before);
+    const guestUpdate = next(match.guest);
+    expect((await send(replacement, move())).state?.stateVersion).toBe(2);
+    expect((await guestUpdate).state?.moves).toHaveLength(1);
+  });
+
   it("closes an errored socket without altering the match or reflecting the error", async () => {
     const match = await activeMatch();
     const before = await stored(match.matchId);

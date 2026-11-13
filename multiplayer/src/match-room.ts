@@ -92,6 +92,8 @@ export class MatchRoom extends DurableObject<Env> {
             return;
           }
           if (result.duplicate) {
+            // Retries are deduplicated within the last 128 accepted request IDs;
+            // older unchanged retries are rejected by their stale expectedVersion.
             this.send(socket, { t: "state", state: toWireState(record) });
             return;
           }
