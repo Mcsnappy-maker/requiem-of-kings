@@ -48,6 +48,16 @@ export interface MoveRequest {
   promotion: PromotionPiece | null;
 }
 
+/** Validate untrusted frames before they reach the pure match state. */
+export function isMoveRequest(body: Record<string, unknown>): body is Record<string, unknown> & MoveRequest {
+  return body.t === "move" && body.v === PROTOCOL_VERSION && Object.keys(body).length === 7
+    && typeof body.requestId === "string" && body.requestId.trim().length > 0 && body.requestId.length <= 128
+    && typeof body.expectedVersion === "number" && Number.isSafeInteger(body.expectedVersion) && body.expectedVersion >= 0
+    && typeof body.from === "string" && /^[a-h][1-8]$/.test(body.from)
+    && typeof body.to === "string" && /^[a-h][1-8]$/.test(body.to)
+    && (body.promotion === null || typeof body.promotion === "string" && /^[qrbn]$/.test(body.promotion));
+}
+
 export interface CreateMatchRequest {
   v: 2;
   name: string;
@@ -81,8 +91,12 @@ export interface StateMessage {
 
 export type AuthenticationError = "bad-message" | "bad-version" | "bad-token" | "not-seated" | "join-consumed" | "match-expired" | "no-match" | "server-error";
 
+export type ProtocolError = AuthenticationError | "frame-too-large" | "rate-limited" | "seat-replaced"
+  | "not-active" | "game-over" | "state-version-mismatch" | "not-your-turn" | "illegal-move";
+
 export interface ErrorMessage {
   t: "error";
-  code: AuthenticationError;
+  code: ProtocolError;
   fatal: boolean;
+  state?: WireGameState;
 }
