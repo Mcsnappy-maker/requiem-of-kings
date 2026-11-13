@@ -47,3 +47,42 @@ export interface MoveRequest {
   to: string;
   promotion: PromotionPiece | null;
 }
+
+export interface CreateMatchRequest {
+  v: 2;
+  name: string;
+  color: WireColor | "random";
+}
+
+export interface CreateMatchResponse {
+  matchId: string;
+  hostToken: string;
+  joinToken: string;
+  state: WireGameState;
+}
+
+export type AuthenticateRequest =
+  | { t: "resume"; v: 2; token: string }
+  | { t: "claim"; v: 2; token: string; name: string };
+
+export interface SeatedMessage {
+  t: "seated";
+  seat: SeatId;
+  color: WireColor;
+  state: WireGameState;
+  /** Issued only once, in response to a successful invite claim. */
+  seatToken?: string;
+}
+
+export interface StateMessage {
+  t: "state";
+  state: WireGameState;
+}
+
+export type AuthenticationError = "bad-message" | "bad-version" | "bad-token" | "not-seated" | "join-consumed" | "match-expired" | "no-match" | "server-error";
+
+export interface ErrorMessage {
+  t: "error";
+  code: AuthenticationError;
+  fatal: boolean;
+}

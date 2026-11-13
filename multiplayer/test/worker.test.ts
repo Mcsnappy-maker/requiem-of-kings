@@ -1,6 +1,7 @@
 import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { allowedOrigins, corsHeaders, type Env as ServiceEnv } from "../src/env";
+import worker from "../src/index";
 
 declare global {
   namespace Cloudflare {
@@ -83,12 +84,103 @@ describe("origin configuration", () => {
   });
 });
 
-describe("MatchRoom scaffold", () => {
-  it("returns a JSON 501 placeholder from the bound Durable Object", async () => {
+describe("MatchRoom routing", () => {
+  it("does not expose internal routes through the Worker", async () => {
+    const response = await exports.default.fetch("https://worker.test/internal/create", { method: "POST" });
+    expect(response.status).toBe(404);
+  });
+
+  it("returns a safe JSON 404 from an unknown Durable Object route", async () => {
     const room = env.MATCHES.get(env.MATCHES.idFromName("scaffold-test"));
     const response = await room.fetch("https://match.test/");
-    expect(response.status).toBe(501);
+    expect(response.status).toBe(404);
     expect(response.headers.get("Content-Type")).toContain("application/json");
-    expect(await response.json()).toEqual({ error: "not-implemented" });
+    expect(await response.json()).toEqual({ error: "not-found" });
+  });
+});
+
+describe("match creation", () => {
+  const origin = "http://localhost:8080";
+  const create = (body: unknown, url = "https://worker.test/api/matches") => exports.default.fetch(url, {
+    method: "POST", headers: { Origin: origin, "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+
+  it.each([undefined, 1, "2"])("requires numeric protocol 2 (received %s)", async (v) => {
+    const response = await create({ v, name: "Host", color: "w" });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "bad-version" });
+  });
+
+  it.each([
+    null, [], { v: 2, color: "w" }, { v: 2, name: "Host" }, { v: 2, name: 3, color: "w" },
+    { v: 2, name: "Host", color: "red" }, { v: 2, name: "Host", color: "w", clock: 300 },
+  ])("rejects malformed creation input %j", async (body) => {
+    const response = await create(body);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "bad-message" });
+  });
+
+  it("rejects malformed JSON", async () => {
+    const response = await exports.default.fetch("https://worker.test/api/matches", {
+      method: "POST", headers: { Origin: origin, "Content-Type": "application/json" }, body: "{",
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "bad-message" });
+  });
+
+  it("requires HTTPS for credentials", async () => {
+    const response = await create({ v: 2, name: "Host", color: "w" }, "http://worker.test/api/matches");
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "https-required" });
+  });
+
+  it.each(["http://localhost:8787", "http://127.0.0.1:8787"])("allows local HTTP development at %s with configured local origins", async (base) => {
+    for (const localOrigin of ["http://localhost:8080", "http://127.0.0.1:8080"]) {
+      const response = await exports.default.fetch(`${base}/api/matches`, {
+        method: "POST", headers: { Origin: localOrigin, "Content-Type": "application/json" },
+        body: JSON.stringify({ v: 2, name: "Host", color: "w" }),
+      });
+      expect(response.status).toBe(201);
+      expect(response.headers.get("Access-Control-Allow-Origin")).toBe(localOrigin);
+    }
+  });
+
+  it("requires HTTPS for loopback requests from a configured nonlocal origin", async () => {
+    const response = await worker.fetch(new Request("http://localhost:8787/api/matches", {
+      method: "POST", headers: { Origin: "https://game.test", "Content-Type": "application/json" },
+      body: JSON.stringify({ v: 2, name: "Host", color: "w" }),
+    }), { ...env, ALLOWED_ORIGINS: "https://game.test" }, {} as ExecutionContext);
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "https-required" });
+  });
+
+  it.each(["w", "b", "random"])("creates waiting matches for colour %s", async (color) => {
+    const response = await create({ v: 2, name: "Host", color });
+    expect(response.status).toBe(201);
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe(origin);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    const body = await response.json() as { matchId: string; hostToken: string; joinToken: string; state: { status: string; players: { name: string; color: string }[] } };
+    expect(body.matchId).toMatch(/^[a-f0-9-]{36}$/);
+    expect(body.hostToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(body.joinToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(new Set([body.matchId, body.hostToken, body.joinToken]).size).toBe(3);
+    expect(body.state.status).toBe("waiting");
+    expect(body.state.players[0].name).toBe("Host");
+    expect(color === "random" ? ["w", "b"] : [color]).toContain(body.state.players[0].color);
+  });
+
+  it("answers allowed preflight without allocating a match", async () => {
+    const response = await exports.default.fetch("https://worker.test/api/matches", { method: "OPTIONS", headers: { Origin: origin } });
+    expect(response.status).toBe(204);
+    expect(response.headers.get("Access-Control-Allow-Methods")).toBe("POST, GET, OPTIONS");
+    expect(response.headers.get("Access-Control-Allow-Headers")).toBe("Content-Type");
+  });
+
+  it("rejects credentials in WebSocket URLs", async () => {
+    const response = await exports.default.fetch("https://worker.test/api/matches/00000000-0000-4000-8000-000000000000/ws?token=must-not-echo", {
+      headers: { Origin: origin, Upgrade: "websocket" },
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "bad-message" });
   });
 });
