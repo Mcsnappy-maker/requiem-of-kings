@@ -1,0 +1,25 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "requiem-multiplayer",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-13",
+  "vars": {
+    "ALLOWED_ORIGINS": ""
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "MATCHES", "class_name": "MatchRoom" }]
+  },
+  "exports": {
+    "MatchRoom": { "type": "durable-object", "storage": "sqlite" }
+  },
+  "env": {
+    "development": {
+      "vars": {
+        "ALLOWED_ORIGINS": "http://localhost:8080,http://127.0.0.1:8080"
+      },
+      "durable_objects": {
+        "bindings": [{ "name": "MATCHES", "class_name": "MatchRoom" }]
+      }
+    }
+  }
+}
