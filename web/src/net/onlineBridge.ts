@@ -27,7 +27,7 @@ export class OnlineBridge {
       client.on("state", (state) => this.reconcile(state, true)),
       client.on("pending", (pending) => { if (pending) controller.setNetworkReady(false); }),
       client.on("status", ({ status }) => {
-        if (status === "error") this.terminal = true;
+        // Transport errors can recover; only a fatal failure makes this bridge terminal.
         if (status !== "connected") controller.setNetworkReady(false);
       }),
       client.on("failed", ({ message, fatal, state }) => {

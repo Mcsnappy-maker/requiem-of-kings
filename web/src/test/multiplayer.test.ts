@@ -748,6 +748,31 @@ describe("durable client state machine", () => {
 });
 
 describe("durable bridge canonical reconciliation", () => {
+  it("restores board control after a recoverable host failure and successful retry", async () => {
+    const browser = clientEnvironment();
+    browser.fetch.mockRejectedValueOnce(new Error("Temporary outage"));
+    const client = new OnlineClient();
+    const controller = new GameController();
+    const bridge = new OnlineBridge(client, controller, { onResync: vi.fn(), onNotice: vi.fn() });
+    try {
+      await expect(client.host("Host", "w")).rejects.toThrow("Could not create match");
+      expect(client.getStatus()).toBe("error");
+      expect(controller.isNetworkReady()).toBe(false);
+      expect(bridge.submitMove("e2", "e4")).toBe(false);
+      await client.host("Host", "w");
+      const socket = TestSocket.instances[0];
+      socket.open();
+      socket.receive({ t: "seated", seat: "host", color: "w", state: activeState() });
+      await drainBridge();
+      expect(client.getStatus()).toBe("connected");
+      expect(controller.isNetworkReady()).toBe(true);
+      expect(bridge.submitMove("e2", "e4")).toBe(true);
+      expect(socket.sent[1]).toMatchObject({ t: "move", expectedVersion: 1, from: "e2", to: "e4" });
+      expect(controller.pieceAt("e2")?.kind).toBe("p");
+    } finally {
+      bridge.dispose(); client.dispose(); controller.stop();
+    }
+  });
   function setup() {
     clientEnvironment();
     const { client, socket } = connectHost();
