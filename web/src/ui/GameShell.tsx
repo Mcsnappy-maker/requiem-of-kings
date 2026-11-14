@@ -691,14 +691,14 @@ function LoadingScreen({ progress }: { progress: number }) {
   return (
     <div className="mc-fade absolute inset-0 flex flex-col items-center justify-center gap-5 bg-[#05060a]/85 px-6">
       <p className="mc-display text-[0.62rem] tracking-[0.5em] text-[#a89268]">MUSTERING THE ARMIES</p>
-      <h1 className="mc-display mc-title-glow text-4xl text-[#f4e3bd]">KING&apos;S GAMBIT</h1>
+      <h1 className="mc-display mc-title-glow text-center text-4xl text-[#f4e3bd]">REQUIEM OF KINGS</h1>
       <div className="h-[3px] w-64 overflow-hidden rounded-full bg-[#2a251c]">
         <div
           className="h-full rounded-full bg-gradient-to-r from-[#8a6522] via-[#f6dfa5] to-[#8a6522] transition-[width] duration-300"
           style={{ width: `${Math.round(progress * 100)}%` }}
         />
       </div>
-      <p className="text-xs italic text-[#7d6f57]">Carving {Math.round(progress * 6)} of 6 figures…</p>
+      <p className="text-xs italic text-[#7d6f57]">Summoning {Math.round(progress * 6)} of 6 orders…</p>
     </div>
   );
 }
