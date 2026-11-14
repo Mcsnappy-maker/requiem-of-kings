@@ -57,7 +57,9 @@ export const HERO_SPECS: Record<string, HeroSpec> = {
       death: "Death_A",
       hit: "Hit_A",
     },
-    stature: 1.18,
+    // Showcase heroes should read as champions at the normal gameplay camera,
+    // not disappear among the rank crests and procedural soldiers.
+    stature: 1.28,
   },
   // Black queen: The Deathweaver. Skeletal necromancer with a spirit staff.
   bq: {
@@ -75,7 +77,7 @@ export const HERO_SPECS: Record<string, HeroSpec> = {
       death: "Death_C_Skeletons",
       hit: "Hit_A",
     },
-    stature: 1.22,
+    stature: 1.27,
   },
 };
 

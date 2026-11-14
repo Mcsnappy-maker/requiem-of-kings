@@ -62,6 +62,10 @@ Instead of recolouring the upstream generated chess pieces, we added a dedicated
 
 ## 3. Honest Limitations & What Remains for Codex
 
+### Character presentation follow-up
+
+The combined multiplayer release makes floating rank badges opt-in rather than the default and gives the two rigged showcase heroes a stronger board silhouette. This removes visual clutter on phone and desktop while preserving the badge setting for players who want maximum rank readability. It is a presentation improvement, not a substitute for bespoke high-detail character art.
+
 1. **Asset Realism:** KayKit Knight and Skeleton Mage are **stylized CC0 low-poly rigged characters**. They prove the skeletal animation, bone-prop attachment, material identity, and duel choreography pipeline end-to-end, but achieving realistic dark-fantasy AAA visuals requires replacing `Knight.glb` / `Skeleton_Mage.glb` with higher-detail PBR sculpted & rigged GLBs using the exact same `HERO_SPECS` contract in `src/scene/heroes.ts`.
 2. **Remaining 10 Classes:** Only `wn` (Ember Paladin) and `bq` (Deathweaver) use the new `heroes.ts` pipeline. The other 10 classes (`wk`, `wq`, `wb`, `wr`, `wp`, `bk`, `bb`, `bn`, `br`, `bp`) still use the original upstream sculpts until the vertical slice is approved or expanded.
 3. **Software WebGL Timing:** In headless Chromium (SwiftShader ~1–3 FPS), the duel exceeds the 11–12s real-time watchdog; on a real desktop GPU at 60 FPS, `playHeroDuel()` completes cleanly in ~3.8 seconds.

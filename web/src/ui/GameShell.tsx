@@ -47,7 +47,9 @@ export function GameShell() {
     reducedMotion: false,
     reducedFlashing: false,
     rotateBoard: true,
-    rankBadges: true,
+    // Let the character silhouettes lead the default presentation. Players
+    // who prefer maximum chess readability can restore every crest in Settings.
+    rankBadges: false,
     muted: false,
   }));
 
