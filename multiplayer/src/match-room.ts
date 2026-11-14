@@ -11,8 +11,16 @@ interface SeatAttachment {
   receivedAt?: number[];
 }
 
+interface PendingAttachment {
+  pending: true;
+  connectedAt: number;
+  receivedAt: number[];
+}
+
 const MAX_FRAME_BYTES = 64 * 1024;
 const MAX_MESSAGES_PER_SECOND = 20;
+const MAX_PENDING_SOCKETS = 8;
+const AUTH_WINDOW_MS = 15_000;
 
 function isCreateMatchInput(value: unknown): value is CreateMatchInput {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
@@ -45,8 +53,18 @@ export class MatchRoom extends DurableObject<Env> {
       if (search) return Response.json({ error: "bad-message" }, { status: 400 });
       if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") return Response.json({ error: "websocket-required" }, { status: 426 });
       if (!await this.ctx.storage.get("match")) return Response.json({ error: "no-match" }, { status: 404 });
+      const pending = this.ctx.getWebSockets()
+        .map((socket) => ({ socket, attachment: this.pendingAttachment(socket) }))
+        .filter((entry): entry is { socket: WebSocket; attachment: PendingAttachment } => Boolean(entry.attachment))
+        .sort((a, b) => a.attachment.connectedAt - b.attachment.connectedAt);
+      while (pending.length >= MAX_PENDING_SOCKETS) {
+        const oldest = pending.shift();
+        if (oldest?.socket.readyState === WebSocket.OPEN) oldest.socket.close(1008, "authentication-required");
+      }
       const { 0: client, 1: server } = new WebSocketPair();
-      // Pending sockets have no identity and cannot receive state broadcasts.
+      // Pending sockets have no seat identity and cannot receive broadcasts.
+      // Their bounded attachment survives hibernation and prevents free socket floods.
+      server.serializeAttachment({ pending: true, connectedAt: Date.now(), receivedAt: [] } satisfies PendingAttachment);
       this.ctx.acceptWebSocket(server);
       return new Response(null, { status: 101, webSocket: client });
     }
@@ -60,11 +78,15 @@ export class MatchRoom extends DurableObject<Env> {
       if (socket.readyState !== WebSocket.OPEN) return;
       try {
         const attachment = this.attachment(socket);
+        const rateAttachment = attachment ?? this.pendingAttachment(socket);
         const now = Date.now();
-        if (attachment) {
-          const receivedAt = (attachment.receivedAt ?? []).filter((time) => time > now - 1000);
+        if (rateAttachment) {
+          if ("pending" in rateAttachment && now - rateAttachment.connectedAt > AUTH_WINDOW_MS) {
+            return this.fatal(socket, "not-seated");
+          }
+          const receivedAt = (rateAttachment.receivedAt ?? []).filter((time) => time > now - 1000);
           if (receivedAt.length >= MAX_MESSAGES_PER_SECOND) return this.fatal(socket, "rate-limited");
-          socket.serializeAttachment({ ...attachment, receivedAt: [...receivedAt, now] } satisfies SeatAttachment);
+          socket.serializeAttachment({ ...rateAttachment, receivedAt: [...receivedAt, now] });
         }
         const bytes = typeof message === "string" ? new TextEncoder().encode(message).byteLength : message.byteLength;
         if (bytes > MAX_FRAME_BYTES) return this.fatal(socket, "frame-too-large");
@@ -134,6 +156,14 @@ export class MatchRoom extends DurableObject<Env> {
     const candidate = value as Partial<SeatAttachment>;
     return (candidate.seat === "host" || candidate.seat === "guest") && typeof candidate.tokenHash === "string"
       ? candidate as SeatAttachment : null;
+  }
+
+  private pendingAttachment(socket: WebSocket): PendingAttachment | null {
+    const value: unknown = socket.deserializeAttachment();
+    if (!value || typeof value !== "object") return null;
+    const candidate = value as Partial<PendingAttachment>;
+    return candidate.pending === true && typeof candidate.connectedAt === "number" && Array.isArray(candidate.receivedAt)
+      ? candidate as PendingAttachment : null;
   }
 
   private seat(socket: WebSocket, record: MatchRecord, attachment: SeatAttachment, seatToken?: string): void {

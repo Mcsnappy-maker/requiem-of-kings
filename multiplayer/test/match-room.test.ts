@@ -106,7 +106,7 @@ describe("durable match creation and authentication", () => {
     pending.addEventListener("message", (event) => { received.push(JSON.parse(event.data as string)); });
     const attachments = await runInDurableObject(room(match.matchId), (_instance, ctx) => ctx.getWebSockets().map((socket) => socket.deserializeAttachment()));
     expect(attachments).toContainEqual(expect.objectContaining({ seat: "host", tokenHash: await hashSecret(match.hostToken) }));
-    expect(attachments.filter(Boolean)).toHaveLength(1);
+    expect(attachments.filter((attachment) => attachment?.seat)).toHaveLength(1);
     await evictDurableObject(room(match.matchId));
     const hostUpdate = next(host);
     const guest = await connect(match.matchId);
@@ -117,6 +117,19 @@ describe("durable match creation and authentication", () => {
     expect(await rejected).toEqual({ t: "error", code: "not-seated", fatal: true });
     expect(received).toEqual([{ t: "error", code: "not-seated", fatal: true }]);
     expect((await stored(match.matchId)).moves).toEqual([]);
+  });
+
+  it("bounds unauthenticated sockets and evicts the oldest pending connection", async () => {
+    const match = await create();
+    const pending: WebSocket[] = [];
+    for (let index = 0; index < 8; index += 1) pending.push(await connect(match.matchId));
+    const closed = new Promise<CloseEvent>((resolve) => pending[0].addEventListener("close", resolve, { once: true }));
+    pending.push(await connect(match.matchId));
+    expect((await closed).code).toBe(1008);
+    const attachments = await runInDurableObject(room(match.matchId), (_instance, ctx) =>
+      ctx.getWebSockets().map((socket) => socket.deserializeAttachment()),
+    );
+    expect(attachments.filter((attachment) => attachment?.pending === true)).toHaveLength(8);
   });
 
   it.each([
@@ -287,7 +300,7 @@ describe("authoritative moves and socket recovery", () => {
     const replaced = next(match.host);
     await runInDurableObject(room(match.matchId), async (instance, ctx) => {
       const oldHost = ctx.getWebSockets().find((socket) => socket.deserializeAttachment()?.seat === "host")!;
-      const newHost = ctx.getWebSockets().find((socket) => !socket.deserializeAttachment())!;
+      const newHost = ctx.getWebSockets().find((socket) => socket.deserializeAttachment()?.pending === true)!;
       await instance.webSocketMessage(newHost, JSON.stringify({ t: "resume", v: 2, token: match.hostToken }));
       // Deliver an already queued callback directly: client.send() could simply
       // refuse a closed connection and never exercise the room's protection.

@@ -36,6 +36,13 @@ export default {
     }
 
     if (request.method === "POST" && pathname === "/api/matches") {
+      // Cloudflare supplies this header at the edge. Do not trust caller-set
+      // forwarding headers as an identity; local development remains unmetered.
+      const clientKey = request.headers.get("CF-Connecting-IP");
+      if (clientKey && env.MATCH_CREATE_LIMITER) {
+        const { success } = await env.MATCH_CREATE_LIMITER.limit({ key: clientKey });
+        if (!success) return Response.json({ error: "rate-limited" }, { status: 429, headers });
+      }
       let body: Record<string, unknown>;
       try {
         const parsed: unknown = await request.json();

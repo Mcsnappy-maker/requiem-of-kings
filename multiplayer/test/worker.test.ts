@@ -1,5 +1,5 @@
 import { env, exports } from "cloudflare:workers";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { allowedOrigins, corsHeaders, type Env as ServiceEnv } from "../src/env";
 import worker from "../src/index";
 
@@ -103,6 +103,18 @@ describe("match creation", () => {
   const origin = "http://localhost:8080";
   const create = (body: unknown, url = "https://worker.test/api/matches") => exports.default.fetch(url, {
     method: "POST", headers: { Origin: origin, "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+
+  it("rejects edge clients after the match-creation limiter is exhausted", async () => {
+    const limit = vi.fn().mockResolvedValue({ success: false });
+    const response = await worker.fetch(new Request("https://worker.test/api/matches", {
+      method: "POST",
+      headers: { Origin: origin, "Content-Type": "application/json", "CF-Connecting-IP": "203.0.113.10" },
+      body: JSON.stringify({ v: 2, name: "Host", color: "w" }),
+    }), { ...env, MATCH_CREATE_LIMITER: { limit } }, {} as ExecutionContext);
+    expect(response.status).toBe(429);
+    expect(await response.json()).toEqual({ error: "rate-limited" });
+    expect(limit).toHaveBeenCalledWith({ key: "203.0.113.10" });
   });
 
   it.each([undefined, 1, "2"])("requires numeric protocol 2 (received %s)", async (v) => {

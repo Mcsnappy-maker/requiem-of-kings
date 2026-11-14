@@ -2,6 +2,9 @@ import type { MatchRoom } from "./match-room";
 
 export interface Env {
   MATCHES: DurableObjectNamespace<MatchRoom>;
+  MATCH_CREATE_LIMITER?: {
+    limit(options: { key: string; delta?: number }): Promise<{ success: boolean }>;
+  };
   ALLOWED_ORIGINS: string;
 }
 
