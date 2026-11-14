@@ -325,10 +325,16 @@ export class EffectsSystem {
 export class ShakeSystem {
   private trauma = 0;
   private elapsed = 0;
+  private scale = 1;
   readonly offset = new THREE.Vector3();
 
+  setScale(scale: number): void {
+    this.scale = Math.max(0, scale);
+  }
+
   add(amount: number): void {
-    this.trauma = Math.min(1, this.trauma + amount);
+    if (this.scale <= 0) return;
+    this.trauma = Math.min(1, this.trauma + amount * this.scale);
   }
 
   update(delta: number): void {

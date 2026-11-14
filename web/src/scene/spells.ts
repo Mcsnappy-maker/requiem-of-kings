@@ -34,12 +34,12 @@ export interface SpellLook {
 }
 
 /**
- * The ivory kingdom burns cold — witchfire off a crystal staff. The Sun Empire
- * throws a piece of the sun itself.
+ * The Ember Court burns with ancient molten fire. The Hollow Legion channels
+ * forbidden spectral violet necromancy.
  */
 export const SPELL_LOOK: Record<Faction, SpellLook> = {
-  w: { core: 0xf4f9ff, flame: 0x4f9cff, ember: 0xbcd8ff, light: 0x7cb8ff },
-  b: { core: 0xfff0c6, flame: 0xff5f18, ember: 0xff9a3c, light: 0xff7a2a },
+  w: { core: 0xfff6dc, flame: 0xff4d12, ember: 0xffa436, light: 0xff6224 },
+  b: { core: 0xf5eeff, flame: 0x8b22eb, ember: 0xc084fc, light: 0x9333ea },
 };
 
 let coreMap: THREE.CanvasTexture | null = null;

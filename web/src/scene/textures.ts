@@ -703,3 +703,218 @@ export function shaftTexture(): THREE.CanvasTexture {
   texture.colorSpace = THREE.SRGBColorSpace;
   return texture;
 }
+
+/** Procedural Gothic Stained Glass Rose Window with leaded tracery and luminous gem tones. */
+export function gothicRoseWindowTexture(): THREE.CanvasTexture {
+  const size = 512;
+  const { canvas, ctx } = createCanvas(size);
+  const cx = size / 2;
+  const cy = size / 2;
+  const radius = size * 0.46;
+
+  // Dark stone/iron masonry surround
+  ctx.fillStyle = "#121318";
+  ctx.fillRect(0, 0, size, size);
+
+  // Outer stone frame
+  ctx.fillStyle = "#22252e";
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius + 12, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Glass backdrop
+  ctx.fillStyle = "#0a0612";
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 12 Outer lancet petals (Stained glass)
+  const petals = 12;
+  const colors = [
+    "#dc2626", "#ea580c", "#d97706", "#7c3aed",
+    "#9333ea", "#b91c1c", "#f59e0b", "#4338ca",
+    "#c026d3", "#e11d48", "#f97316", "#6d28d9",
+  ];
+
+  for (let i = 0; i < petals; i += 1) {
+    const a1 = (i / petals) * Math.PI * 2;
+    const a2 = ((i + 1) / petals) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.arc(cx, cy, radius * 0.92, a1, a2);
+    ctx.closePath();
+    ctx.fillStyle = colors[i % colors.length];
+    ctx.fill();
+  }
+
+  // Inner ring of alternating ruby & sapphire foils
+  const innerPetals = 8;
+  for (let i = 0; i < innerPetals; i += 1) {
+    const a1 = (i / innerPetals) * Math.PI * 2;
+    const a2 = ((i + 1) / innerPetals) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.arc(cx, cy, radius * 0.55, a1, a2);
+    ctx.closePath();
+    ctx.fillStyle = i % 2 === 0 ? "#ef4444" : "#a855f7";
+    ctx.fill();
+  }
+
+  // Central radiant golden star / rosette
+  ctx.fillStyle = "#fbbf24";
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius * 0.24, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#fffbeb";
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius * 0.1, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Leaded stone tracery (Black lead lines)
+  ctx.strokeStyle = "#101014";
+  ctx.lineWidth = 4;
+  for (let i = 0; i < petals; i += 1) {
+    const a = (i / petals) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(cx + Math.cos(a) * radius, cy + Math.sin(a) * radius);
+    ctx.stroke();
+  }
+
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius * 0.92, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius * 0.55, 0, Math.PI * 2);
+  ctx.stroke();
+
+  ctx.beginPath();
+  ctx.arc(cx, cy, radius * 0.24, 0, Math.PI * 2);
+  ctx.stroke();
+
+  grain(ctx, size, 16, 0.95);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+/** The Ember Court heraldic banner: imperial crimson with antique gold trim and flaming sword crest. */
+export function emberBannerTexture(): THREE.CanvasTexture {
+  const width = 256;
+  const height = 512;
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("2D canvas context unavailable");
+
+  // Crimson cloth gradient
+  const bg = ctx.createLinearGradient(0, 0, width, height);
+  bg.addColorStop(0, "#4a0e08");
+  bg.addColorStop(0.5, "#6e160e");
+  bg.addColorStop(1, "#380905");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, width, height);
+
+  // Antique gold heraldic border
+  ctx.strokeStyle = "#d4af37";
+  ctx.lineWidth = 8;
+  ctx.strokeRect(10, 10, width - 20, height - 20);
+
+  ctx.strokeStyle = "#996515";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(18, 18, width - 36, height - 36);
+
+  // Flaming crest / Crown & sword
+  const cx = width / 2;
+  ctx.fillStyle = "#f59e0b";
+  ctx.beginPath();
+  ctx.arc(cx, 140, 36, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#ef4444";
+  ctx.beginPath();
+  ctx.arc(cx, 140, 24, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Royal sword down center
+  ctx.fillStyle = "#fef08a";
+  ctx.fillRect(cx - 4, 180, 8, 180);
+  ctx.fillRect(cx - 30, 200, 60, 8); // crossguard
+
+  // Bottom swallowtail cutout simulation
+  ctx.fillStyle = "rgba(0,0,0,0.3)";
+  ctx.beginPath();
+  ctx.moveTo(10, height - 10);
+  ctx.lineTo(cx, height - 60);
+  ctx.lineTo(width - 10, height - 10);
+  ctx.fill();
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+/** The Hollow Legion banner: obsidian black with spectral violet runes and crowned skull crest. */
+export function hollowBannerTexture(): THREE.CanvasTexture {
+  const width = 256;
+  const height = 512;
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("2D canvas context unavailable");
+
+  // Obsidian void gradient
+  const bg = ctx.createLinearGradient(0, 0, width, height);
+  bg.addColorStop(0, "#100918");
+  bg.addColorStop(0.5, "#1f0f33");
+  bg.addColorStop(1, "#0a0510");
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, width, height);
+
+  // Spectral silver & violet border
+  ctx.strokeStyle = "#8b5cf6";
+  ctx.lineWidth = 8;
+  ctx.strokeRect(10, 10, width - 20, height - 20);
+
+  ctx.strokeStyle = "#c4b5fd";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(18, 18, width - 36, height - 36);
+
+  // Crowned skull crest
+  const cx = width / 2;
+  ctx.fillStyle = "#a855f7";
+  ctx.beginPath();
+  ctx.arc(cx, 140, 34, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#e9d5ff";
+  ctx.beginPath();
+  ctx.arc(cx, 145, 22, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Eyes
+  ctx.fillStyle = "#100918";
+  ctx.beginPath();
+  ctx.ellipse(cx - 9, 145, 4, 6, 0, 0, Math.PI * 2);
+  ctx.ellipse(cx + 9, 145, 4, 6, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Violet spectral flame below
+  ctx.fillStyle = "#c084fc";
+  ctx.beginPath();
+  ctx.moveTo(cx - 16, 180);
+  ctx.lineTo(cx, 280);
+  ctx.lineTo(cx + 16, 180);
+  ctx.fill();
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
