@@ -41,7 +41,12 @@ export interface HeroSpec {
   stature: number;
 }
 
-export const HERO_SPECS: Record<string, HeroSpec> = {
+/**
+ * Retained as licensed source material, but deliberately not selected by the
+ * live Requiem roster. These low-poly showcase figures break the visual
+ * language of the more detailed core armies.
+ */
+export const ARCHIVED_SHOWCASE_HERO_SPECS: Record<string, HeroSpec> = {
   // White knight: The Ember Paladin. Two-handed greatsword, heavy cape.
   wn: {
     id: "wn",
@@ -80,6 +85,9 @@ export const HERO_SPECS: Record<string, HeroSpec> = {
     stature: 1.27,
   },
 };
+
+/** Active bespoke heroes. Keep empty until replacements meet the art brief. */
+export const HERO_SPECS: Record<string, HeroSpec> = {};
 
 /** The animation set a hero resolves to, or undefined for ordinary figures. */
 export function heroAnimationSet(key: string): PieceAnimationSet | undefined {

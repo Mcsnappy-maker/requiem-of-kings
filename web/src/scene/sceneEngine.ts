@@ -19,6 +19,7 @@ import { disposeSurfaces } from "./detail";
 import { readReviewState } from "./reviewState";
 import { SPELL_LOOK, SpellLightPool, SpellOrb } from "./spells";
 import { disposeStrikeAssets, spawnGroundWave, spawnPillar, spawnSlash } from "./strikes";
+import { readabilityForViewport } from "./mobileReadability";
 import {
   CaptureMachine,
   ContactLedger,
@@ -3147,6 +3148,14 @@ export class SceneEngine {
     }
   }
 
+  private applyViewportReadability(width: number, height: number): void {
+    const coarsePointer = window.matchMedia("(pointer: coarse)").matches;
+    const readability = readabilityForViewport(width, height, coarsePointer);
+    const look = ARENA_LOOKS[this.arena];
+    this.renderer.toneMappingExposure = look.exposure * (this.tactical ? 1.12 : 1) * readability.exposureScale;
+    this.cameraLamp.intensity = look.lamp.intensity * readability.lampScale;
+  }
+
   /** An authored shot, pushed back far enough to frame on the live aspect. */
   private framedShot(shot: CameraShot): CameraShot {
     const scale = this.frameScale();
@@ -3812,6 +3821,7 @@ export class SceneEngine {
 
     this.cameraLamp.color.setHex(look.lamp.color);
     this.cameraLamp.intensity = look.lamp.intensity;
+    this.applyViewportReadability(this.canvas.clientWidth || window.innerWidth, this.canvas.clientHeight || window.innerHeight);
 
     // Re-stage the strike against the new dressing, then put the void back.
     if (this.tactical) {
@@ -3952,6 +3962,7 @@ export class SceneEngine {
     this.applyFraming();
     this.renderer.setSize(width, height, false);
     this.postfx.setSize(width, height);
+    this.applyViewportReadability(width, height);
   };
 
   private onManualCamera = (): void => {
