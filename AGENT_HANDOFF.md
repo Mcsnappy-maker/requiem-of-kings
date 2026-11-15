@@ -1,9 +1,9 @@
 # Requiem of Kings — Agent Handoff
 
 **Last updated:** 15 November 2026  
-**Active stage:** Stage 2 — Cohesive Armies  
-**Active branch:** `feature/stage-two-cohesive-armies`  
-**Active worktree:** `C:\Users\mohar\OneDrive\Desktop\codex projects\requiem-of-kings\.worktrees\stage-two-cohesive-armies`
+**Completed stages:** Stage 1 (Battlefield & Mobile HUD), Stage 2 (Cohesive Armies), Stage 3 (Battle Spectacle)  
+**Production branch:** `main`  
+**Live URL:** `https://requiem-of-kings.vercel.app`
 
 ## Product Goal
 
@@ -14,6 +14,7 @@ The creative target is:
 - Ember Court versus Hollow Legion.
 - Dragons, ruined throne-temple environments and dramatic but readable magic.
 - Cohesive, role-specific characters rather than mismatched low-poly or generic models.
+- Short, skippable battle spectacle with faction-specific impact, death, and victory effects.
 - Play by private link from different homes.
 - Resume the same saved match after closing the browser or changing device.
 - Work on phone, tablet and desktop.
@@ -30,75 +31,55 @@ The “£5 million game” language is a quality aspiration. Never claim that th
 - Baseline/upstream: `https://github.com/ade5791/rork-medieval-3d-chess.git`
 - Preserve the upstream MIT licence and all asset provenance in `ASSET_REGISTER.md`.
 
-## Honest Current State
+## What Has Been Completed
 
-Production currently has:
+### Stage 1 — Battlefield and Mobile Presentation (merged to `main` in `d6be18d`)
+- Rebuilt the Shattered Throne battlefield (`web/src/scene/battlefield.ts`) with Gothic arches, rose window, braziers, and faction banners.
+- Added the procedural dragon fly-by (`web/src/scene/dragonFlight.ts`).
+- Built a compact phone HUD (`360×640`) with Undo, Resign, and More (`≥44×44` px touch targets) and full-board framing with all 32 pieces visible.
 
-- Private two-player online matches.
-- One-time opponent invite links and private seat-return links.
-- Durable saved match state and reconnect support.
-- Vercel deployment and Cloudflare Durable Object match service.
-- A readable Shattered Throne battlefield.
-- A visible procedural dragon fly-by.
-- A compact 360×640 phone HUD.
-- Full-board phone framing with 32 pieces visible.
+### Stage 2 — Cohesive Armies (merged to `main` in `66e3306`)
+- Added the 12-role procedural regalia system (`web/src/scene/factionRegalia.ts`) layered onto every `PieceView` (`web/src/scene/pieces.ts`): Ember Court uses blackened steel, crimson cloth, and molten gold; Hollow Legion uses bone, tattered violet, and cyan/necrotic light.
+- Added faction-specific selection, hover, legal-move, and capture feedback (`factionFeedback` in `web/src/scene/effects.ts`).
+- Verified live on `https://requiem-of-kings.vercel.app`: 326 unit tests, 14 browser tests, 121 Worker tests, 37/37 legacy relay checks, 4 responsive QA profiles (`360×640` low, `390×664`, `810×1080`, `1440×900`), and a live two-client create/join/`e4`/reconnect smoke test.
 
-Production verification at Stage 1:
+### Stage 3 — Battle Spectacle (merged to `main` in `c378b76`)
+- Added `web/src/scene/battleSpectacle.ts` defining faction-specific `impact`, `death`, and `victory` effect palettes (`factionSpectacle`) and meaningful match-event triggers (`shouldTriggerDragonEvent`).
+- Switched `DragonFlight` in `web/src/scene/dragonFlight.ts` and `web/src/scene/battlefield.ts` to event-driven appearances during gameplay (`check`, `promotion`, `q`/`r` capture, and `victory`, with a 24s cooldown for non-victory events) while preserving deterministic ambient loop mode for `?review=1` QA.
+- Made in-progress capture cinematics skippable via `SceneEngine.skipCaptureCinematic()` and a `TAP TO SKIP` (`≥44×44` px) overlay in `web/src/ui/GameShell.tsx` without altering chess state.
+- Added faction-specific victory bursts/mist/flash in `SceneEngine.playEndCinematic()` and faction-specific death ember/smoke colors in `SceneEngine`.
+- Verified with 329 unit tests across 14 files, 14 browser tests across 2 files, production build (`1,885` modules), and deployed to `https://requiem-of-kings.vercel.app`.
 
-- 258 unit tests passed.
-- 14 browser tests passed.
-- 121 multiplayer Worker tests passed.
-- Legacy relay passed 37/37 checks.
-- Live create, join, `e4`, disconnect and reconnect smoke test passed.
+## Honest Remaining Limitations / Future Work
 
-What is **not finished**:
-
-- The characters still rely on the baseline rigged roster and do not yet deliver a cohesive premium Ember Court/Hollow Legion identity.
-- The dragon is an environmental procedural silhouette, not a high-detail hero model.
-- Stage 3 combat spectacle and faction-specific victory/capture presentation remain future work.
-- Physical-device frame rate has not yet been measured.
+- **Physical-device frame rate** on a real phone has not yet been measured directly (all automated visual QA ran in headless Chromium with SwiftShader).
+- **Hero 3D art**: Characters and the dragon are procedural/regalia-layered over the baseline rigged roster (`ASSET_REGISTER.md`), not commissioned AAA sculpts. Future bespoke/licensed GLB replacements must be recorded in `ASSET_REGISTER.md` and tested on `360×640` low quality.
 
 ## Approved Design and Plans
 
-Read these before changing code:
-
-1. `docs/superpowers/specs/2026-11-15-requiem-visual-rebuild-design.md`
+1. `docs/superpowers/specs/2026-11-15-requiem-visual-rebuild-design.md` (Authoritative spec)
 2. `docs/superpowers/plans/2026-11-15-stage-one-visual-rebuild.md`
 3. `docs/superpowers/plans/2026-11-15-stage-two-cohesive-armies.md`
-
-The specification is authoritative. The Stage 2 plan is the active execution plan.
-
-## Exact Next Step
-
-Start Stage 2 Task 1 from `docs/superpowers/plans/2026-11-15-stage-two-cohesive-armies.md`:
-
-1. Create `web/src/scene/factionRegalia.ts`.
-2. Create `web/src/test/factionRegalia.test.ts` first and confirm the test fails.
-3. Define all 12 faction/role art descriptors.
-4. Build original procedural regalia with clear faction and chess-role silhouettes.
-5. Verify and commit before integrating into `PieceView`.
-
-Do not download random character models or introduce an asset without a confirmed licence and an `ASSET_REGISTER.md` entry.
 
 ## Non-Negotiable Visual Acceptance
 
 - Test the real rendered result, not merely whether a canvas exists.
-- Always include 360×640 low quality, 390×664 phone, 810×1080 tablet and 1440×900 desktop.
+- Always include `360×640` low quality, `390×664` phone, `810×1080` tablet and `1440×900` desktop.
 - The full board and all 32 starting pieces must be visible.
-- Phone controls must remain at least 44×44 CSS pixels.
+- Phone controls must remain at least `44×44` CSS pixels.
 - No black-on-black presentation.
 - Ember and Hollow must be distinguishable without relying solely on floating rank badges.
-- All six roles must have distinct silhouettes within each faction.
+- All six roles (`p,n,b,r,q,k`) must have distinct silhouettes within each faction.
 - The game must remain playable while decorative effects are disabled or reduced.
 
 ## Verification Commands
 
-From `web`:
+Run from a clean worktree's `web` directory (see Known Local Limitation below):
 
 ```powershell
-npm test
+npm test -- --run
 npm run build
-node scripts/qa-responsive.mjs http://127.0.0.1:4173 qa-shots/<stage-name>
+node scripts/qa-responsive.mjs https://requiem-of-kings.vercel.app qa-shots/stage-three-prod
 ```
 
 From the repository root:
@@ -109,18 +90,14 @@ npm run typecheck --prefix multiplayer
 node server/e2e-multiplayer.mjs
 ```
 
-Before a production claim, repeat responsive QA against `https://requiem-of-kings.vercel.app` and perform a live two-client create/join/move/reconnect smoke test.
-
 ## Safety and Release Rules
 
-- Work on the active feature branch/worktree, not directly on `main`.
+- Work in a feature branch/worktree, not directly on `main`.
 - Follow test-first changes for new behaviour.
-- Independently review each task before proceeding.
 - Do not alter chess rules or multiplayer credentials while doing visual work.
 - Never expose seat tokens, join tokens or private return links in logs or commits.
-- Merge and push only after full branch review and fresh tests.
-- Deploy from the repository root to the existing Vercel project `requiem-of-kings`; do not create another Vercel project.
+- Deploy from the repository root (`C:\Users\mohar\OneDrive\Desktop\codex projects\requiem-of-kings`) to the existing Vercel project `requiem-of-kings` (`npx --yes vercel --prod --yes`); do not create another Vercel project.
 
 ## Known Local Limitation
 
-The main checkout’s `web/node_modules` contains a Windows-locked Rolldown binding, so `npm ci` there can fail with `EPERM`. Do not delete it forcibly. The Stage 2 worktree has a clean dependency installation and is the correct place to run tests and builds.
+The main checkout’s `web/node_modules` contains a Windows-locked Rolldown binding, so `npm ci` there can fail with `EPERM`. Do not delete it forcibly. Use one of the worktrees (e.g., `.worktrees/stage-three-battle-spectacle/web`) or create a new worktree for clean dependency installation, tests, and builds.
