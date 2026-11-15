@@ -8,6 +8,7 @@ import type { ArenaTheme } from "./arena";
 import { ARENA_LOOKS, DEFAULT_ARENA } from "./arena";
 import { DEFAULT_ERA, ERAS, rosterCoverage, type EraId, assetBase } from "./eras";
 import { Battlefield } from "./battlefield";
+import { factionSpectacle, shouldTriggerDragonEvent, type DragonEventReason } from "./battleSpectacle";
 import { JungleOverlay } from "./jungle";
 import { BOARD_TOP, BoardView, type HighlightKind, TILE, squareToWorld, worldToSquare } from "./board";
 import { CastleHall, buildEnvironmentMap, disposeEnvironment } from "./environment";
@@ -42,6 +43,7 @@ export interface SceneCallbacks {
   onContextLost: () => void;
   onCameraFlipped?: (flipped: boolean) => void;
   onTacticalView?: (active: boolean) => void;
+  onCapturePlaying?: (playing: boolean) => void;
 }
 
 interface CameraShot {
@@ -472,6 +474,7 @@ export class SceneEngine {
   private lastManualCameraAt = -999;
   private introPlaying = false;
   private introSkipped = false;
+  private captureSkip: (() => void) | null = null;
   private orbiting = false;
   private cameraFlipped = false;
   /** Flat top-down map: sculpts swap for counters and the world is struck. */
@@ -557,6 +560,9 @@ export class SceneEngine {
     this.hall = new CastleHall(preset, look);
     this.scene.add(this.hall.group);
     this.battlefield = new Battlefield(preset, look);
+    this.battlefield.setDragonAmbientLoop(
+      this.review.probe || this.review.pinQuality || Boolean(this.review.quality),
+    );
     this.scene.add(this.battlefield.group);
     this.jungle = new JungleOverlay(preset, look);
     this.scene.add(this.jungle.group);
@@ -1571,14 +1577,21 @@ export class SceneEngine {
             this.lastBeatMs = performance.now() - beatStartedAt;
             this.maxBeatMs = Math.max(this.maxBeatMs, this.lastBeatMs);
           });
-          const finished = await withWatchdog(
-            performance$,
-            budget,
-            () => {
-              this.beatTimeouts += 1;
-              console.warn("[scene] battle beat exceeded its budget", moveId);
-            },
-          );
+          this.callbacks.onCapturePlaying?.(true);
+          const skip$ = new Promise<boolean>((resolve) => {
+            this.captureSkip = () => resolve(false);
+          });
+          const finished = await Promise.race([
+            withWatchdog(
+              performance$,
+              budget,
+              () => {
+                this.beatTimeouts += 1;
+                console.warn("[scene] battle beat exceeded its budget", moveId);
+              },
+            ),
+            skip$,
+          ]);
           if (!finished) {
             // Put the stage back the way a completed beat would leave it, then
             // finish the kill plainly so the board stays consistent.
@@ -1599,6 +1612,8 @@ export class SceneEngine {
           piece.setStrikeTilt(0);
           if (!victim.isSlain) await this.crumble(victim, from);
         } finally {
+          this.captureSkip = null;
+          this.callbacks.onCapturePlaying?.(false);
           beat?.abort();
           if (this.beat === beat) this.beat = null;
           this.phase = "done";
@@ -1667,6 +1682,11 @@ export class SceneEngine {
 
     this.board.setHighlight(event.from, "last");
     this.board.setHighlight(event.to, "last");
+
+    if (shouldTriggerDragonEvent({ check: event.isCheck, promotion: event.promotion, captured: event.captured })) {
+      const reason: DragonEventReason = event.isCheck ? "check" : event.promotion ? "promotion" : "major-capture";
+      this.battlefield.triggerDragon(reason);
+    }
 
     if (event.isCheck) {
       audio.play("check", 0.55);
@@ -1995,7 +2015,8 @@ export class SceneEngine {
     // White = The Ember Court (molten fire, warm gold)
     // Black = The Hollow Legion (spectral violet, necrotic chill)
     const isEmber = attacker.color === "w";
-    const burstColor = isEmber ? 0xffb347 : 0xc084fc;
+    const spectacle = factionSpectacle(attacker.color);
+    const burstColor = spectacle.impactColor;
     const flashIntensity = flashAllowed ? Math.min(4.4, 2.2 * power) : Math.min(1.2, 0.8 * power);
     this.effects.spawnFlash(impact, flashIntensity, flashAllowed ? 0.24 : 0.12);
     this.effects.spawnBurst(impact, burstColor, Math.round(settings.captureParticles * power), {
@@ -2008,9 +2029,7 @@ export class SceneEngine {
 
     // Steel: the cut hangs in the air for a couple of frames after the blade.
     if (profile.slash) {
-      const slashColor = isEmber
-        ? (attacker.kind === "k" ? 0xffdf9a : 0xff9e3b)
-        : (attacker.kind === "k" ? 0xd8b4fe : 0xa855f7);
+      const slashColor = attacker.kind === "k" ? spectacle.kingSlashColor : spectacle.slashColor;
       void spawnSlash(this.scene, this.tweens, impact, {
         color: slashColor,
         size: profile.slash.size,
@@ -2882,7 +2901,7 @@ export class SceneEngine {
         if (t >= nextEmber) {
           nextEmber += 0.09;
           // Embers peeled off the burn edge, left hanging where the body was.
-          this.effects.spawnBurst(position.clone().setY(position.y + 0.3), EMBER_COLOR[victim.color], motes, {
+          this.effects.spawnBurst(position.clone().setY(position.y + 0.3), factionSpectacle(victim.color).deathEmberColor, motes, {
             speed: 0.5,
             life: 1.5,
             gravity: -0.5,
@@ -2903,7 +2922,7 @@ export class SceneEngine {
             life: 0.9,
             speed: 0.45,
             rise: 0.3,
-            color: 0x94897b,
+            color: factionSpectacle(victim.color).deathSmokeColor,
             opacity: 0.45,
           });
         }
@@ -2912,7 +2931,7 @@ export class SceneEngine {
 
     // It never lands — the body burns through mid-flight and is gone.
     const end = position.clone();
-    this.effects.spawnBurst(end, EMBER_COLOR[victim.color], motes * 3, {
+    this.effects.spawnBurst(end, factionSpectacle(victim.color).deathEmberColor, motes * 3, {
       speed: 0.85,
       life: 1.9,
       gravity: -0.6,
@@ -3466,6 +3485,16 @@ export class SceneEngine {
     this.tweens.cancelAll();
   }
 
+  /** Skips an in-progress capture moment cleanly without altering chess state. */
+  skipCaptureCinematic(): boolean {
+    if (!this.captureSkip) return false;
+    const resolve = this.captureSkip;
+    this.captureSkip = null;
+    this.tweens.cancelAll();
+    resolve();
+    return true;
+  }
+
   private async playEndCinematic(): Promise<void> {
     const snapshot = this.controller.getSnapshot();
     const result = snapshot.result;
@@ -3490,7 +3519,36 @@ export class SceneEngine {
       position: focus.clone().add(direction.multiplyScalar(3.4)).setY(1.9),
       target: focus,
     };
-    this.shake.add(0.35);
+    if (result.winner) {
+      this.battlefield.triggerDragon("victory");
+      const spec = factionSpectacle(result.winner);
+      const settings = QUALITY_SETTINGS[this.preset];
+      const flashIntensity = this.reducedFlashing ? 1.1 : 2.8;
+      this.effects.spawnFlash(focus.clone().setY(1.1), flashIntensity, this.reducedFlashing ? 0.2 : 0.45);
+      this.effects.spawnBurst(focus, spec.victoryColor, Math.max(12, settings.captureParticles), {
+        speed: 3.1,
+        life: 1.3,
+        gravity: -0.35,
+        rise: 0.9,
+      });
+      this.effects.spawnBurst(focus, spec.victorySecondary, Math.max(8, Math.round(settings.captureParticles * 0.6)), {
+        speed: 2.2,
+        life: 1.5,
+        gravity: -0.25,
+        rise: 1.2,
+      });
+      if (settings.smokePlumes > 0) {
+        this.effects.spawnSmoke(focus, {
+          count: Math.max(3, Math.round(settings.smokePlumes * 0.6)),
+          color: spec.victorySmokeColor,
+          scale: 0.9,
+          growth: 2.2,
+          life: 1.4,
+          rise: 0.6,
+        });
+      }
+    }
+    if (!this.reducedMotion) this.shake.add(0.35);
     await this.moveCameraTo(shot, 2.4);
   }
 

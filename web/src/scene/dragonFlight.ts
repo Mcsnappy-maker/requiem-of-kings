@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import type { DragonEventReason } from "./battleSpectacle";
 import type { QualityPreset } from "./quality";
 
 export function dragonFlightPose(elapsed: number): {
@@ -26,6 +27,9 @@ export class DragonFlight {
   private readonly leftWing = new THREE.Group();
   private readonly rightWing = new THREE.Group();
   private readonly embers: THREE.Points;
+  private ambientLoop = true;
+  private flightStart: number | null = null;
+  private lastTriggerAt = -Infinity;
 
   constructor() {
     this.group.name = "dragon-flight";
@@ -124,7 +128,46 @@ export class DragonFlight {
     this.embers.visible = preset !== "low";
   }
 
+  setAmbientLoop(enabled: boolean): void {
+    this.ambientLoop = enabled;
+    if (!enabled && this.flightStart === null) {
+      this.group.visible = false;
+    }
+  }
+
+  /**
+   * Triggers a single 16-second pass for a rare, meaningful match event.
+   * Non-victory events respect a 24s cooldown so back-to-back checks don't spam.
+   */
+  trigger(now: number, reason: DragonEventReason): boolean {
+    if (reason !== "victory" && now - this.lastTriggerAt < 24) {
+      return false;
+    }
+    this.flightStart = now;
+    this.lastTriggerAt = now;
+    return true;
+  }
+
   update(elapsed: number): void {
+    if (!this.ambientLoop) {
+      if (this.flightStart === null) {
+        this.group.visible = false;
+        return;
+      }
+      const local = elapsed - this.flightStart;
+      if (local < 0 || local >= 16) {
+        this.group.visible = false;
+        if (local >= 16) this.flightStart = null;
+        return;
+      }
+      const pose = dragonFlightPose(local);
+      this.group.position.set(...pose.position);
+      this.group.rotation.y = pose.yaw;
+      this.group.visible = pose.visible;
+      this.leftWing.rotation.z = -pose.wing;
+      this.rightWing.rotation.z = pose.wing;
+      return;
+    }
     const pose = dragonFlightPose(elapsed);
     this.group.position.set(...pose.position);
     this.group.rotation.y = pose.yaw;
