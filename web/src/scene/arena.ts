@@ -45,6 +45,8 @@ const NO_FLORA: FloraLook = {
 
 export interface ArenaLook {
   id: ArenaTheme;
+  /** Optional full battlefield name; label remains the map-picker caption. */
+  name?: string;
   label: string;
   note: string;
 
@@ -107,14 +109,14 @@ export interface ArenaLook {
 
 export const ARENA_LOOKS: Record<ArenaTheme, ArenaLook> = {
   /**
-   * The Ashen Throne: vast ancient Gothic cathedral with towering vaulted arches,
-   * stained-glass windows, black marble dais and burning braziers.
+   * The Shattered Throne: a ruined border temple between two rival courts.
    */
   ashen: {
     id: "ashen",
-    label: "The Ashen Throne",
-    note: "Vast ancient Gothic cathedral — towering arches, stained glass and burning braziers",
-    exposure: 1.08,
+    name: "The Shattered Throne",
+    label: "The Shattered Throne",
+    note: "Ruined throne-temple on the border of the Ember Court and Hollow Legion — broken crowns, crimson and violet standards",
+    exposure: 1.18,
     background: 0x05060a,
     fog: { color: 0x0e0e14, density: 0.0088 },
     environment: {
@@ -127,8 +129,8 @@ export const ARENA_LOOKS: Record<ArenaTheme, ArenaLook> = {
     },
     hemi: { sky: 0x4b6294, ground: 0x1a120d, intensity: 0.85 },
     keyLight: { color: 0xffdfb0, intensity: 2.8, position: [-8, 17, 7] },
-    fill: { color: 0x627ea8, intensity: 0.62, position: [8, 7, -8] },
-    lamp: { color: 0xffe4c6, intensity: 0.32 },
+    fill: { color: 0x8a91cf, intensity: 0.78, position: [8, 7, -8] },
+    lamp: { color: 0xffe4c6, intensity: 0.48 },
     torch: { intensity: 1.15, flame: 1.15 },
     stone: { floor: 0x48423a, dais: 0x3b352f, pillar: 0x4e4840, wall: 0x34302b, rubble: 0x38332c },
     window: { color: 0xffa044, opacity: 0.68 },
