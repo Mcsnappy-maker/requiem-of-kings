@@ -166,7 +166,7 @@ Run: `git add web/src/ui/Hud.tsx web/src/ui/mobileHud.ts web/src/ui/medieval.css
 
 ### Task 4: Release Verification and Deployment
 
-Local release preparation verified on 2026-11-15 at implementation commit `11f7b07`. The controller owns push, merge, deployment and production verification after final review; those steps remain pending. Earlier task checkboxes are left to their implementation records rather than reconstructed as test-first claims.
+Stage One released on 2026-11-15 from merge commit `d6be18d`, including final review fixes at `b04594e`. Earlier task checkboxes are left to their implementation records rather than reconstructed as test-first claims.
 
 **Files:**
 - Modify: `ASSET_REGISTER.md`
@@ -185,7 +185,7 @@ Run: `cd web && npm test && npm run build`
 
 Expected: every unit and browser test passes; Vite exits zero.
 
-Verified locally: 254 unit tests across 11 files and 14 browser tests across 2 files passed; production build exited zero. Existing Vite native-config and large-chunk warnings remain.
+Final verification: 258 unit tests across 11 files and 14 browser tests across 2 files passed; production build exited zero. Existing Vite native-config and large-chunk warnings remain.
 
 - [x] **Step 3: Run the legacy relay/worker suites documented by their package scripts**
 
@@ -195,16 +195,20 @@ Verified actual commands from package scripts and `.github/workflows/verify.yml`
 
 Visually inspected the existing `web/qa-shots/stage-one-fix-round-1/phone.png`, `tablet.png` and `desktop.png`: full playable board and both armies are visible with no HUD overlap; phone shows the current-turn identity and exactly Undo, Resign and More. The accompanying QA log reports live WebGL, zero overflow, 32 figures and zero hall occlusions on all three profiles; phone controls are at least 44px. Generated QA images are excluded from the release-record commit.
 
-- [ ] **Step 4: Push all commits to `origin/main` and deploy the repository root to the existing `requiem-of-kings` Vercel project**
+- [x] **Step 4: Push all commits to `origin/main` and deploy the repository root to the existing `requiem-of-kings` Vercel project**
 
 Run: `git push origin main`, then deploy from the linked repository root so the configured `cd web && npm ci && npm run build` command runs exactly once.
 
-- [ ] **Step 5: Verify the exact production URL visually and functionally**
+Pushed `d6be18d` to `origin/main`. Vercel deployment `dpl_8rfFGVTgvMHnzbVuh9grU8DJzL4J` completed successfully and was aliased to `https://requiem-of-kings.vercel.app`.
+
+- [x] **Step 5: Verify the exact production URL visually and functionally**
 
 Run: `cd web && node scripts/qa-responsive.mjs https://requiem-of-kings.vercel.app qa-shots/stage-one-live phone,tablet,desktop`.
 
 Create a private online hall, open the join link in a second isolated browser context, make one legal move, reload one side and confirm it reconnects to the same position.
 
-- [ ] **Step 6: Commit release records and push**
+Production QA passed at 360×640 low, 390×664 medium, 810×1080 medium and 1440×900 desktop: complete board, 32 pieces, visible unobscured dragon, zero horizontal overflow and live WebGL. A live private match seated two isolated clients, synchronized `e4` at state version 2, and restored the host seat to the same saved position after reconnect.
+
+- [x] **Step 6: Commit release records and push**
 
 Run: `git add ASSET_REGISTER.md docs/superpowers/plans/2026-11-15-stage-one-visual-rebuild.md && git commit -m "docs: record Stage One visual release" && git push origin main`
