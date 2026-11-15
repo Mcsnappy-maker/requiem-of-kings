@@ -92,7 +92,7 @@
 - [x] Run 258+ unit tests, 14+ browser tests, production build, Worker tests/typecheck and relay 37/37.
 - [x] Record procedural provenance in `ASSET_REGISTER.md`.
 - [x] Commit local visual/release-gate records.
-- [ ] Controller release gate: after final review, merge to `main`, push, deploy the existing Vercel project and repeat live responsive plus create/join/move/reconnect smoke tests.
+- [x] Controller release gate: after final review, merge to `main`, push, deploy the existing Vercel project and repeat live responsive plus create/join/move/reconnect smoke tests.
 
 ### Task 4 local verification record — 15 November 2026
 
