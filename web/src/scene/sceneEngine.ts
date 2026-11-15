@@ -3269,11 +3269,14 @@ export class SceneEngine {
   }
 
   setCameraPreset(preset: CameraPreset): void {
+    if (this.introPlaying) this.skipIntro();
     // Picking a 3D shot always folds the flat map away first.
     if (this.tactical) {
       this.setTacticalView(false, CAMERA_SHOTS[preset]);
       return;
     }
+    this.baseFov = DEFAULT_FOV;
+    this.applyFraming();
     void this.moveCameraTo(CAMERA_SHOTS[preset]);
   }
 

@@ -111,7 +111,9 @@ export class PostFX {
   private build(): void {
     this.dispose();
     const settings = QUALITY_SETTINGS[this.preset];
-    if (this.direct || !settings.postFx) return;
+    const isCoarseTouch = typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
+    const forcePost = typeof window !== "undefined" && new URLSearchParams(window.location.search).has("postfx");
+    if (this.direct || !settings.postFx || (isCoarseTouch && !forcePost)) return;
 
     const size = new THREE.Vector2();
     this.renderer.getSize(size);
