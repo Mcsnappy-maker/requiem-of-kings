@@ -86,9 +86,24 @@
 **Interfaces:**
 - QA exposes and verifies 32 regalia groups, six role styles per faction, and successful low/medium rendering.
 
-- [ ] Extend the review probe so QA fails if any live piece lacks faction regalia or if either faction lacks all six role styles.
-- [ ] Build and capture 360×640 low, 390×664 phone, 810×1080 tablet and 1440×900 desktop screenshots, including selected Ember and Hollow pieces.
-- [ ] Visually inspect that factions and roles are distinguishable without relying only on floating badges.
-- [ ] Run 258+ unit tests, 14+ browser tests, production build, Worker tests/typecheck and relay 37/37.
-- [ ] Record procedural provenance in `ASSET_REGISTER.md`.
-- [ ] Commit, merge to `main`, push, deploy the existing Vercel project and repeat live responsive plus create/join/move/reconnect smoke tests.
+- [x] Extend the review probe so QA fails if any live piece lacks faction regalia or if either faction lacks all six role styles.
+- [x] Build and capture 360×640 low, 390×664 phone, 810×1080 tablet and 1440×900 desktop screenshots, including selected Ember and Hollow pieces.
+- [x] Visually inspect that factions and roles are distinguishable without relying only on floating badges.
+- [x] Run 258+ unit tests, 14+ browser tests, production build, Worker tests/typecheck and relay 37/37.
+- [x] Record procedural provenance in `ASSET_REGISTER.md`.
+- [x] Commit local visual/release-gate records.
+- [ ] Controller release gate: after final review, merge to `main`, push, deploy the existing Vercel project and repeat live responsive plus create/join/move/reconnect smoke tests.
+
+### Task 4 local verification record — 15 November 2026
+
+- Web: `npm test` passed 326 unit tests across 13 files and 14 browser tests across 2 files. `npm run build` passed (1884 modules); existing Vite native-config and large-chunk warnings remain.
+- Worker: `npm test --prefix multiplayer` passed 121 tests across 5 files. `npm run typecheck --prefix multiplayer` passed.
+- Legacy relay: `node server/e2e-multiplayer.mjs` passed 37/37 checks, including create/join, authoritative moves, reconnect and rematch.
+- Local preview: built worktree served on `http://127.0.0.1:4175`; port 4173 was already occupied, so this gate used its own preview instance.
+- QA now reports each live fighter's regalia ownership/visibility/metadata, 32 total regalia groups, 16 fighters and all six role styles per faction, and the requested pinned quality. It captures the normal scene, dragon, no-badge reduced-motion scene and selected Ember/Hollow knights. The selected opposing fighter is a render fixture rather than a turn/legality test.
+- The first tablet/desktop selection sample exposed a harness timing race: `setSelected` changes a flag, and regalia materials update on the next engine frame. The fixture now awaits rendered animation frames instead of a fixed 500 ms delay; the brightness and faction-colour assertions remain enforced.
+- Final responsive result: **PASS** at 360×640 low, 390×664 medium, 810×1080 medium and 1440×900 medium. Both phones passed the initial run; the corrected tablet/desktop rerun exited 0. All profiles report 32 visible regalia groups, six role styles per faction, zero horizontal overflow, zero hall occlusions, no runtime errors and a fully visible board/dragon. Phone controls are at least 44 CSS pixels. Exact gold/cyan selection colours and brightness also pass in the recorded phone results.
+- Real rendered normal/no-badge views were inspected at all four sizes, plus selected Ember/Hollow evidence at low phone and desktop sizes. Faction palettes remain warm metal/crimson/gold versus bone/violet/cyan. Compact pawns, knight crests/horns, ritual bishops, fortress rooks, sweeping queens and banner/crown kings have different silhouettes. Fine far-rank role details are small at 360×640; tablet/desktop identification is easier. Physical-phone frame rate remains unmeasured.
+- Screenshots and run logs remain local/ignored: `web/qa-shots/responsive/stage-two/` and `.superpowers/sdd/2026-11-15-stage-two-cohesive-armies/task-4-*.log`. Generated evidence is not committed.
+- New assets are original procedural geometry/materials layered over baseline rigged heroes. No external character/texture download was introduced; provenance is recorded in `ASSET_REGISTER.md`.
+- Scope ruling: the Task 4 worker owns local verification and its commit. Merge, push, Vercel deployment and production smoke are reserved for the controller after final branch review; this record makes no Stage 2 production claim.

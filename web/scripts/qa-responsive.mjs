@@ -7,8 +7,8 @@ const requested = new Set((process.argv[4] ?? "phone-low,phone,tablet,desktop").
 mkdirSync(outputDir, { recursive: true });
 const profiles = [
   ["phone-low", { viewport: { width: 360, height: 640 }, deviceScaleFactor: 1, isMobile: true, hasTouch: true }, "low"],
-  ["phone", devices["iPhone 13"]],
-  ["tablet", devices["iPad (gen 7)"]],
+  ["phone", { ...devices["iPhone 13"], viewport: { width: 390, height: 664 } }],
+  ["tablet", { ...devices["iPad (gen 7)"], viewport: { width: 810, height: 1080 } }],
   ["desktop", { viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 }],
 ].filter(([name]) => requested.has(name));
 
@@ -28,6 +28,7 @@ for (const [name, profile, quality = "medium"] of profiles) {
   await page.goto(`${baseUrl}/?review=1&quality=${quality}&probe=1`, { waitUntil: "networkidle", timeout: 120_000 });
   await page.waitForSelector("canvas", { state: "visible", timeout: 120_000 });
   await page.waitForSelector('[data-hud="turn"]', { state: "visible", timeout: 120_000 });
+  await page.waitForFunction(() => window.__kg?.ready?.() && window.__kg?.census?.().pieces === 32, null, { timeout: 120_000 });
   await page.waitForTimeout(4_000);
 
   const result = await page.evaluate(() => {
@@ -40,7 +41,34 @@ for (const [name, profile, quality = "medium"] of profiles) {
       return box.width > 0 && box.height > 0 && style.visibility !== "hidden" && style.display !== "none";
     });
     const rootStyle = getComputedStyle(document.body);
+    const engine = window.__kg?.__engine;
+    const roles = ["p", "n", "b", "r", "q", "k"];
+    const livePieces = [...(engine?.pieces?.values() ?? [])];
+    const regalia = livePieces.map((piece) => {
+      const groups = piece.runtime.children.filter((node) => node.name === "faction-regalia");
+      const group = groups[0];
+      return {
+        faction: piece.color, kind: piece.kind, groups: groups.length,
+        visible: Boolean(group?.visible && group.children.filter((node) => node.isMesh && node.visible).length === 3),
+        matches: group?.userData.faction === piece.color && group?.userData.kind === piece.kind,
+        style: group?.userData.style ?? null,
+      };
+    });
     return {
+      quality: window.__kg?.preset?.(),
+      regalia: {
+        pieces: livePieces.length,
+        groups: regalia.reduce((sum, piece) => sum + piece.groups, 0),
+        invalid: regalia.filter((piece) => piece.groups !== 1 || !piece.visible || !piece.matches || !piece.style),
+        factions: Object.fromEntries(["w", "b"].map((faction) => {
+          const pieces = regalia.filter((piece) => piece.faction === faction);
+          return [faction, {
+            pieces: pieces.length,
+            kinds: roles.filter((kind) => pieces.some((piece) => piece.kind === kind)),
+            styles: [...new Set(pieces.map((piece) => piece.style))].sort(),
+          }];
+        })),
+      },
       viewport: [innerWidth, innerHeight],
       horizontalOverflow: document.documentElement.scrollWidth - innerWidth,
       canvas: rect ? [Math.round(rect.width), Math.round(rect.height)] : null,
@@ -68,6 +96,15 @@ for (const [name, profile, quality = "medium"] of profiles) {
   });
 
   const problems = [];
+  if (result.quality !== quality) problems.push(`expected ${quality} quality, got ${result.quality}`);
+  if (result.regalia.pieces !== 32 || result.regalia.groups !== 32 || result.regalia.invalid.length) {
+    problems.push(`incomplete or invalid faction regalia: ${JSON.stringify(result.regalia)}`);
+  }
+  for (const [faction, army] of Object.entries(result.regalia.factions)) {
+    if (army.pieces !== 16 || army.kinds.length !== 6 || army.styles.length !== 6 || army.styles.some((style) => !style?.startsWith(faction === "w" ? "ember-" : "hollow-"))) {
+      problems.push(`${faction} must expose 16 fighters and six faction role styles: ${JSON.stringify(army)}`);
+    }
+  }
   if (result.horizontalOverflow > 1) problems.push(`horizontal overflow ${result.horizontalOverflow}px`);
   if (!result.webgl) problems.push("WebGL context missing or lost");
   if (!result.canvas || result.canvas[0] < result.viewport[0] * 0.9 || result.canvas[1] < result.viewport[1] * 0.9) {
@@ -185,6 +222,39 @@ for (const [name, profile, quality = "medium"] of profiles) {
   if (dragon.bottom + 8 > bounds?.top) problems.push("dragon overlaps battle envelope");
   if (dragon.clearFraction < 0.9) problems.push(`hall obscures dragon (${dragon.clearFraction} clear)`);
   await page.screenshot({ path: `${outputDir}/${name}-dragon.png`, animations: "disabled", timeout: 180_000 });
+  // Use the real PieceView feedback with badges hidden. Selecting the opposing
+  // fighter here is a visual fixture, not a turn/rules or interaction test.
+  const readability = await page.evaluate(async () => {
+    const engine = window.__kg.__engine;
+    engine.setRankBadges(false);
+    engine.setReducedMotion(true);
+    engine.setReducedFlashing(true);
+    for (const piece of engine.pieces.values()) piece.setSelected(false);
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    return {
+      reducedMotion: engine.reducedMotion,
+      badgesVisible: [...engine.pieces.values()].filter((piece) => piece.badge?.visible).length,
+    };
+  });
+  result.readability = readability;
+  if (!readability.reducedMotion || readability.badgesVisible !== 0) problems.push(`unusable readability fixture: ${JSON.stringify(readability)}`);
+  await page.screenshot({ path: `${outputDir}/${name}-no-badges-reduced-motion.png`, animations: "disabled", timeout: 180_000 });
+  for (const [faction, square] of [["ember", "b1"], ["hollow", "b8"]]) {
+    const feedback = await page.evaluate(async (square) => {
+      const engine = window.__kg.__engine;
+      for (const [position, piece] of engine.pieces) piece.setSelected(position === square);
+      // Software rendering can take longer than a wall-clock delay. Let the
+      // PieceView update loop apply selection before sampling its material.
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const piece = engine.pieces.get(square);
+      const glow = piece.runtime.getObjectByName("faction-regalia").getObjectByName("regalia-accent");
+      return { selected: piece.selected, accent: `#${glow.material.emissive.getHexString()}`, intensity: glow.material.emissiveIntensity };
+    }, square);
+    result.readability[faction] = feedback;
+    const expectedAccent = faction === "ember" ? "#ffb52e" : "#55e8ff";
+    if (!feedback.selected || feedback.accent !== expectedAccent || feedback.intensity < 1) problems.push(`${faction} selected regalia feedback missing: ${JSON.stringify(feedback)}`);
+    await page.screenshot({ path: `${outputDir}/${name}-${faction}-selected-reduced-motion.png`, animations: "disabled", timeout: 180_000 });
+  }
   if (runtimeErrors.length) problems.push(`runtime errors: ${runtimeErrors.slice(0, 3).join(" | ")}`);
   console.log(`${name}: ${problems.length ? "FAIL" : "PASS"}`, JSON.stringify(result));
   failures.push(...problems.map((problem) => `${name}: ${problem}`));
