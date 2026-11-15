@@ -257,9 +257,9 @@
 
   .mc-root [data-hud="primary-actions"] {
     width: 144px;
-    max-width: 38vw;
+    flex-shrink: 0;
     gap: 6px;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
   }
 
   .mc-root .mc-hud-desktop-actions {
@@ -295,8 +295,11 @@
 
   .mc-root [data-hud="secondary-actions"] {
     animation: none;
+    position: fixed;
+    top: calc(max(10px, env(safe-area-inset-top)) + 50px);
+    right: 10px;
     width: min(240px, calc(100vw - 20px));
-    max-height: calc(100dvh - 80px - env(safe-area-inset-top));
+    max-height: calc(100dvh - max(10px, env(safe-area-inset-top)) - 60px - env(safe-area-inset-bottom));
     overflow-y: auto;
     overscroll-behavior: contain;
     background: #171715;

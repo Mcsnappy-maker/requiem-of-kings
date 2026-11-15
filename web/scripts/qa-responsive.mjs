@@ -3,9 +3,10 @@ import { mkdirSync } from "node:fs";
 
 const baseUrl = process.argv[2] ?? "http://127.0.0.1:4173";
 const outputDir = process.argv[3] ?? "qa-shots/responsive";
-const requested = new Set((process.argv[4] ?? "phone,tablet,desktop").split(","));
+const requested = new Set((process.argv[4] ?? "phone-low,phone,tablet,desktop").split(","));
 mkdirSync(outputDir, { recursive: true });
 const profiles = [
+  ["phone-low", { viewport: { width: 360, height: 640 }, deviceScaleFactor: 1, isMobile: true, hasTouch: true }, "low"],
   ["phone", devices["iPhone 13"]],
   ["tablet", devices["iPad (gen 7)"]],
   ["desktop", { viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 }],
@@ -14,7 +15,8 @@ const profiles = [
 const browser = await chromium.launch({ args: ["--use-gl=angle", "--use-angle=swiftshader"] });
 const failures = [];
 
-for (const [name, profile] of profiles) {
+for (const [name, profile, quality = "medium"] of profiles) {
+  const phone = name.startsWith("phone");
   const context = await browser.newContext(profile);
   const page = await context.newPage();
   const runtimeErrors = [];
@@ -23,7 +25,7 @@ for (const [name, profile] of profiles) {
     if (message.type() === "error") runtimeErrors.push(message.text());
   });
 
-  await page.goto(`${baseUrl}/?review=1&quality=medium&probe=1`, { waitUntil: "networkidle", timeout: 120_000 });
+  await page.goto(`${baseUrl}/?review=1&quality=${quality}&probe=1`, { waitUntil: "networkidle", timeout: 120_000 });
   await page.waitForSelector("canvas", { state: "visible", timeout: 120_000 });
   await page.waitForSelector('[data-hud="turn"]', { state: "visible", timeout: 120_000 });
   await page.waitForTimeout(4_000);
@@ -51,6 +53,8 @@ for (const [name, profile] of profiles) {
       directActions: visibleButtons
         .filter((button) => button.closest('[data-hud="primary-actions"]'))
         .map((button) => button.getAttribute("aria-label")),
+      actionTops: visibleButtons.filter((button) => button.closest('[data-hud="primary-actions"]'))
+        .map((button) => button.getBoundingClientRect().top),
       visibleButtons: visibleButtons.length,
       smallestTouchTarget: visibleButtons.length
         ? Math.min(...visibleButtons.map((button) => {
@@ -78,12 +82,14 @@ for (const [name, profile] of profiles) {
   }
   if (bounds?.pieces !== 32) problems.push(`initial armies incomplete (${bounds?.pieces ?? "missing"} figures)`);
   if (bounds?.hallOcclusions !== 0) problems.push(`hall obscures ${bounds?.hallOcclusions ?? "unknown"} figures`);
-  if (name === "phone") {
+  if (phone) {
     for (const [region, width] of Object.entries(result.hudWidths)) {
-      if (width === null || width > result.viewport[0] * 0.38) {
-        problems.push(`${region} exceeds 38% viewport width (${width ?? "missing"}px)`);
+      const limit = region === "primary-actions" ? Math.max(144, result.viewport[0] * 0.38) : result.viewport[0] * 0.38;
+      if (width === null || width > limit + 0.1) {
+        problems.push(`${region} exceeds compact width (${width ?? "missing"}px)`);
       }
     }
+    if (Math.max(...result.actionTops) - Math.min(...result.actionTops) > 1) problems.push("primary actions wrap onto multiple rows");
     if (result.smallestTouchTarget < 44) problems.push(`touch target below 44px (${result.smallestTouchTarget}px)`);
     if (JSON.stringify(result.directActions) !== JSON.stringify(["Undo", "Resign", "More"]) || result.visibleButtons !== 3) {
       problems.push(`expected only Undo, Resign, More; got ${result.directActions.join(", ")} / ${result.visibleButtons} total`);
@@ -96,7 +102,7 @@ for (const [name, profile] of profiles) {
     animations: "disabled",
     timeout: 180_000,
   });
-  if (name === "phone") {
+  if (phone) {
     await page.getByRole("button", { name: "More", exact: true }).click();
     const menu = page.locator('[data-hud="secondary-actions"]');
     await menu.waitFor({ state: "visible" });
@@ -110,10 +116,75 @@ for (const [name, profile] of profiles) {
       return Math.min(box.width, box.height);
     }));
     if (Math.min(...menuTargets) < 44) problems.push("secondary menu target below 44px");
-    await page.screenshot({ path: `${outputDir}/phone-menu.png`, animations: "disabled", timeout: 180_000 });
+    const menuBox = await menu.boundingBox();
+    if (!menuBox || menuBox.x < 0 || menuBox.y < 0 || menuBox.x + menuBox.width > result.viewport[0] || menuBox.y + menuBox.height > result.viewport[1]) {
+      problems.push(`secondary menu extends outside viewport: ${JSON.stringify(menuBox)}`);
+    }
+    await page.screenshot({ path: `${outputDir}/${name}-menu.png`, animations: "disabled", timeout: 180_000 });
+    for (const button of await menu.getByRole("button").all()) {
+      await button.scrollIntoViewIfNeeded();
+      const reachable = await button.evaluate((element) => {
+        const box = element.getBoundingClientRect();
+        const menuBox = element.closest('[data-hud="secondary-actions"]').getBoundingClientRect();
+        const x = box.left + box.width / 2;
+        const y = box.top + box.height / 2;
+        return box.top >= Math.max(0, menuBox.top) && box.bottom <= Math.min(innerHeight, menuBox.bottom)
+          && box.left >= 0 && box.right <= innerWidth && element.contains(document.elementFromPoint(x, y));
+      });
+      if (!reachable) problems.push(`secondary action unreachable: ${await button.innerText()}`);
+    }
+    await page.screenshot({ path: `${outputDir}/${name}-menu-bottom.png`, animations: "disabled", timeout: 180_000 });
     await page.keyboard.press("Escape");
     if (await menu.count()) problems.push("secondary menu did not dismiss on Escape");
   }
+  // Pin only the dragon's normal animation at the middle of its route; leave
+  // the live camera, board, hall, lighting and depth buffer intact.
+  const dragon = await page.evaluate(async () => {
+    const engine = window.__kg.__engine;
+    const flight = engine.battlefield.dragon;
+    const update = flight.update.bind(flight);
+    flight.update = () => update(8);
+    flight.update();
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    flight.group.updateMatrixWorld(true);
+    engine.hall.group.updateMatrixWorld(true);
+    engine.camera.updateMatrixWorld();
+    const points = [];
+    let clear = 0;
+    flight.group.traverse((mesh) => {
+      if (!mesh.isMesh) return;
+      const positions = mesh.geometry.getAttribute("position");
+      for (let i = 0; i < positions.count; i++) {
+        const world = engine.camera.position.clone().fromBufferAttribute(positions, i).applyMatrix4(mesh.matrixWorld);
+        const direction = world.clone().sub(engine.camera.position);
+        engine.raycaster.set(engine.camera.position, direction.clone().normalize());
+        engine.raycaster.far = direction.length() - 0.01;
+        const hidden = engine.raycaster.intersectObject(engine.hall.group, true).some(({ object }) => {
+          if (!object.visible || !object.isMesh) return false;
+          const materials = Array.isArray(object.material) ? object.material : [object.material];
+          return materials.some((material) => !material.transparent || material.opacity >= 0.85);
+        });
+        if (!hidden) clear++;
+        points.push(world.project(engine.camera));
+      }
+    });
+    const rect = engine.canvas.getBoundingClientRect();
+    return {
+      vertices: points.length,
+      clearFraction: clear / points.length,
+      left: (Math.min(...points.map((p) => p.x)) + 1) * rect.width / 2,
+      right: (Math.max(...points.map((p) => p.x)) + 1) * rect.width / 2,
+      top: (1 - Math.max(...points.map((p) => p.y))) * rect.height / 2,
+      bottom: (1 - Math.min(...points.map((p) => p.y))) * rect.height / 2,
+      inFront: points.every((p) => p.z > -1 && p.z < 1),
+    };
+  });
+  result.dragon = dragon;
+  if (!dragon.inFront || dragon.left < 0 || dragon.right > result.viewport[0] || dragon.top < 0 || dragon.bottom > result.viewport[1]) problems.push(`dragon clipped or offscreen: ${JSON.stringify(dragon)}`);
+  if (dragon.right - dragon.left < 45) problems.push("dragon too small to recognize");
+  if (dragon.bottom + 8 > bounds?.top) problems.push("dragon overlaps battle envelope");
+  if (dragon.clearFraction < 0.9) problems.push(`hall obscures dragon (${dragon.clearFraction} clear)`);
+  await page.screenshot({ path: `${outputDir}/${name}-dragon.png`, animations: "disabled", timeout: 180_000 });
   if (runtimeErrors.length) problems.push(`runtime errors: ${runtimeErrors.slice(0, 3).join(" | ")}`);
   console.log(`${name}: ${problems.length ? "FAIL" : "PASS"}`, JSON.stringify(result));
   failures.push(...problems.map((problem) => `${name}: ${problem}`));

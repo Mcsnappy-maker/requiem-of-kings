@@ -29,8 +29,10 @@ describe("Requiem arena identity", () => {
       expect(dragon).toBeDefined();
       const particles = dragon!.getObjectByName("dragon-embers") as THREE.Points;
       expect(particles.visible).toBe(false);
+      const startX = dragon!.position.x;
       battlefield.update(8, new THREE.PerspectiveCamera());
-      expect(dragon!.position.toArray()).toEqual([0, 19.5, -34.5]);
+      expect(dragon!.position.x).toBeGreaterThan(startX);
+      expect(dragon!.visible).toBe(true);
       battlefield.update(14, new THREE.PerspectiveCamera());
       expect(dragon!.visible).toBe(false);
       for (const preset of ["medium", "high", "ultra"] as const) {

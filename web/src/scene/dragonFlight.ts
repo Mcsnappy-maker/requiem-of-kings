@@ -10,9 +10,11 @@ export function dragonFlightPose(elapsed: number): {
   const cycle = ((elapsed % 36) + 36) % 36;
   const progress = Math.min(cycle / 16, 1);
   return {
-    position: [-38 + 76 * progress, 22 - 5 * progress, -45 + 21 * progress],
+    // A low pass through the open courtyard, inside the 20-unit north wall.
+    // The full silhouette clears the far rank in every default camera.
+    position: [-12 + 24 * progress, 1.8, -9.5],
     // The model's nose faces local +Z.
-    yaw: Math.atan2(76, 21),
+    yaw: Math.PI / 2,
     wing: Math.sin(elapsed * 4.2) * 0.32,
     visible: cycle < 16,
   };
@@ -27,6 +29,7 @@ export class DragonFlight {
 
   constructor() {
     this.group.name = "dragon-flight";
+    this.group.scale.setScalar(0.32);
     const charcoal = new THREE.MeshStandardMaterial({
       color: 0x19171b,
       roughness: 0.87,
