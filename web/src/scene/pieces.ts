@@ -13,6 +13,7 @@ import { DEFAULT_ERA, ERAS, type EraId, type EraRoster } from "./eras";
 import { heroAnimationSet, heroSpec, type HeroSpec, type HeroStyle } from "./heroes";
 import { BADGE_LIFT, BADGE_SCALE, TOKEN_SCALE, rankBadgeTexture, tacticalTokenTexture } from "./rankBadges";
 import { radialTexture } from "./textures";
+import { factionFeedback, type FactionFeedback } from "./effects";
 import { wearSurface } from "./detail";
 import { Ease, type TweenManager } from "./tween";
 import { attachWeapons, type AttachedArms } from "./weapons";
@@ -291,7 +292,7 @@ export class PieceView {
   private hovered = false;
   private selected = false;
   private alarm = 0;
-  /** 1 right after a blow lands, decaying — drives the red hit flash. */
+  /** 1 right after a blow lands, decaying — drives the faction hit flash. */
   private hit = 0;
   /** 1 right after the figure sets down, decaying — flares the ground aura. */
   private aura = 0;
@@ -434,16 +435,18 @@ export class PieceView {
     }
     this.meshes.push(...this.regalia.meshes);
 
-    const accent = FACTION_ACCENT[color];
+    const feedback = factionFeedback(color, "idle");
     const glowMaterial = new THREE.MeshBasicMaterial({
       map: sharedGlowTexture(),
-      color: accent,
+      color: feedback.auraColor,
       transparent: true,
-      opacity: 0.16,
+      toneMapped: false,
+      opacity: feedback.auraOpacity,
       depthWrite: false,
       blending: THREE.AdditiveBlending,
     });
     this.glow = new THREE.Mesh(sharedDiscGeometry(), glowMaterial);
+    this.glow.name = "faction-aura";
     this.glow.rotation.x = -Math.PI / 2;
     this.glow.position.y = 0.012;
     this.glow.renderOrder = 3;
@@ -571,9 +574,17 @@ export class PieceView {
     token.scale.setScalar(TOKEN_SCALE[this.kind] * pop * this.tokenFade);
     token.position.y = 0.055 + (this.selected ? 0.05 : 0);
 
-    // Blows and the check alarm burn straight through the plate.
-    const heat = Math.min(1, this.hit * this.hit + alarmPulse * 0.7);
-    material.color.setRGB(1 + heat * 1.1, 1 - heat * 0.5, 1 - heat * 0.6);
+    // Preserve the stamped artwork while tinting impacts with the same army hue.
+    const heat = Math.min(1, this.hit * this.hit + this.aura * this.aura);
+    if (alarmPulse > 0) material.color.setRGB(1 + alarmPulse, 1 - alarmPulse * 0.5, 1 - alarmPulse * 0.6);
+    else {
+      material.color.setHex(factionFeedback(this.color, "hit").emissiveColor);
+      material.color.setRGB(
+        1 + material.color.r * heat * 0.8,
+        1 + material.color.g * heat * 0.8,
+        1 + material.color.b * heat * 0.8,
+      );
+    }
     material.opacity = this.tokenFade * this.fade * (1 - this.dissolveAmount);
   }
 
@@ -921,7 +932,7 @@ export class PieceView {
     this.alarm = value;
   }
 
-  /** White-hot red flash across the figure at the moment a blow connects. */
+  /** Faction-colored flash across the figure at the moment a blow connects. */
   takeHit(): void {
     this.hit = 1;
   }
@@ -1123,17 +1134,18 @@ export class PieceView {
       this.runtime.rotation.x = breath * 0.008 * amplitude + this.strikeTilt;
     }
 
-    const target = this.selected ? 0.5 : this.hovered ? 0.32 : 0.06;
+    const feedback = this.actionFeedback();
+    const target = feedback.emissiveMultiplier;
     const alarmPulse = this.alarm > 0 ? (Math.sin(elapsed * 7) * 0.5 + 0.5) * this.alarm : 0;
-    const hitGlow = this.hit * this.hit * 0.55;
     for (const material of this.materials) {
       const own = this.heroEmissive.get(material);
       const base = own ? own.intensity : this.baseEmissive;
-      const value = base + target * (own ? 0.35 : 0.9) + alarmPulse * 1.5 + hitGlow;
+      const value = base + target * (own ? 0.35 : 0.9) + alarmPulse * 1.5;
       material.emissiveIntensity += (value - material.emissiveIntensity) * Math.min(1, delta * 8);
-      if (this.hit > 0.02) material.emissive.setHex(0xff3418);
-      else if (this.alarm > 0) material.emissive.setHex(0xff2a1a);
-      else material.emissive.setHex(own ? own.color : this.color === "w" ? 0x5a1804 : 0x350d52);
+      if (this.alarm > 0) material.emissive.setHex(0xff2a1a);
+      else if (this.hit > 0.02 || this.aura > 0.02 || this.selected || this.hovered) {
+        material.emissive.setHex(feedback.emissiveColor);
+      } else material.emissive.setHex(own ? own.color : this.color === "w" ? 0x5a1804 : 0x350d52);
     }
     if (this.arms) {
       // Steel and gems answer the same highlight, but keep their own hues.
@@ -1145,11 +1157,12 @@ export class PieceView {
       });
     }
     const glowMaterial = this.glow.material as THREE.MeshBasicMaterial;
-    const settle = this.aura * this.aura;
-    const glowTarget =
-      0.16 + (this.selected ? 0.45 : this.hovered ? 0.28 : 0) + alarmPulse * 0.5 + settle * 0.55;
+    // Constant floors retain the cue without bloom, particles or ambient motion.
+    const pulse = this.idleWanted ? (Math.sin(elapsed * feedback.pulseRate + this.phase) * 0.5 + 0.5) * 0.045 : 0;
+    const glowTarget = Math.min(1, feedback.auraOpacity + alarmPulse * 0.5 + pulse);
+    glowMaterial.color.setHex(this.alarm > 0 ? 0xff2a1a : feedback.auraColor);
     glowMaterial.opacity += (glowTarget - glowMaterial.opacity) * Math.min(1, delta * 8);
-    this.glow.scale.setScalar(1 + (this.selected ? 0.16 : 0) + alarmPulse * 0.25 + settle * 0.5);
+    this.glow.scale.setScalar(feedback.auraScale + alarmPulse * 0.25);
 
     this.updateBadge(delta, elapsed, alarmPulse);
     this.updateToken(delta, alarmPulse);
@@ -1162,13 +1175,14 @@ export class PieceView {
   private updateSlain(delta: number): void {
     if (!this.flat) this.mixer?.update(delta);
     this.updateToken(delta, 0);
-    const hitGlow = this.hit * this.hit * 0.65;
+    const feedback = factionFeedback(this.color, "hit");
+    const hitGlow = this.hit * this.hit * feedback.emissiveMultiplier;
     for (const material of this.materials) {
       const own = this.heroEmissive.get(material);
       const value = (own ? own.intensity : this.baseEmissive) + hitGlow;
       material.emissiveIntensity += (value - material.emissiveIntensity) * Math.min(1, delta * 10);
       material.emissive.setHex(
-        this.hit > 0.02 ? 0xff3418 : own ? own.color : this.color === "w" ? 0x5a1804 : 0x350d52,
+        this.hit > 0.02 ? feedback.emissiveColor : own ? own.color : this.color === "w" ? 0x5a1804 : 0x350d52,
       );
     }
     if (this.arms) {
@@ -1179,6 +1193,19 @@ export class PieceView {
     }
     const glowMaterial = this.glow.material as THREE.MeshBasicMaterial;
     glowMaterial.opacity = Math.max(0, glowMaterial.opacity - delta * 0.6);
+  }
+
+  /** Blend the existing landing/hit clocks over the persistent interaction cue. */
+  private actionFeedback(): FactionFeedback {
+    const feedback = factionFeedback(this.color, this.selected ? "selected" : this.hovered ? "hover" : "idle");
+    for (const [state, strength] of [["capture", this.aura], ["hit", this.hit]] as const) {
+      const transient = factionFeedback(this.color, state);
+      const weight = Math.min(1, strength * strength);
+      feedback.emissiveMultiplier = Math.max(feedback.emissiveMultiplier, transient.emissiveMultiplier * weight);
+      feedback.auraOpacity = Math.max(feedback.auraOpacity, transient.auraOpacity * weight);
+      feedback.auraScale = Math.max(feedback.auraScale, 1 + (transient.auraScale - 1) * weight);
+    }
+    return feedback;
   }
 
   private syncRegaliaPose(): void {

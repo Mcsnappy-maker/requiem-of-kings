@@ -1,7 +1,8 @@
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 
-import type { SquareId } from "../core/types";
+import type { Faction, SquareId } from "../core/types";
+import { factionFeedback, type FactionFeedback } from "./effects";
 import type { ArenaLook } from "./arena";
 import { marbleSurface, metalSurface } from "./detail";
 import {
@@ -177,6 +178,7 @@ interface HighlightSlot {
   beamMaterial: THREE.MeshBasicMaterial;
   kind: HighlightKind | null;
   pulse: boolean;
+  feedback: FactionFeedback | null;
   /** Seconds since the highlight was set; negative while waiting on its stagger. */
   age: number;
   phase: number;
@@ -456,6 +458,7 @@ export class BoardView {
           beamMaterial,
           kind: null,
           pulse: false,
+          feedback: null,
           age: 0,
           phase: (index % 7) * 0.42,
         });
@@ -786,6 +789,7 @@ export class BoardView {
       if (kinds && slot.kind && !kinds.includes(slot.kind)) continue;
       slot.kind = null;
       slot.pulse = false;
+      slot.feedback = null;
       slot.age = 0;
       slot.glow.visible = false;
       slot.marker.visible = false;
@@ -800,7 +804,7 @@ export class BoardView {
    * Lights a square up. `delay` staggers the pop-in so a fan of legal moves
    * ripples outward from the selected piece instead of appearing all at once.
    */
-  setHighlight(square: SquareId, kind: HighlightKind, pulse = false, delay = 0): void {
+  setHighlight(square: SquareId, kind: HighlightKind, pulse = false, delay = 0, faction?: Faction): void {
     const slot = this.slots.get(square);
     if (!slot) return;
     const restart = slot.kind !== kind;
@@ -808,10 +812,18 @@ export class BoardView {
     slot.pulse = pulse;
     if (restart) slot.age = -delay;
 
+    const action = kind === "select" || kind === "move" || kind === "capture" || kind === "castle" || kind === "promote";
+    const feedback = faction && action
+      ? factionFeedback(faction, kind === "select" ? "selected" : kind === "capture" ? "capture" : "legal")
+      : null;
+    slot.feedback = feedback;
     const color = HIGHLIGHT_COLORS[kind];
-    slot.glowMaterial.color.setHex(color);
-    slot.markerMaterial.color.setHex(color);
-    slot.beamMaterial.color.setHex(color);
+    slot.glowMaterial.color.setHex(feedback?.auraColor ?? color);
+    slot.markerMaterial.color.setHex(feedback?.emissiveColor ?? color);
+    slot.beamMaterial.color.setHex(feedback?.auraColor ?? color);
+    for (const material of [slot.glowMaterial, slot.markerMaterial, slot.beamMaterial]) {
+      material.toneMapped = !feedback;
+    }
 
     const markerMap = this.markerMaps[kind];
     slot.markerMaterial.map = markerMap;
@@ -859,11 +871,12 @@ export class BoardView {
       // Pop-in: overshoot the scale, then breathe.
       const t = Math.min(slot.age / POP_DURATION, 1);
       const pop = easeOutBack(t);
-      const wave = (Math.sin(this.elapsed * (slot.pulse ? 5.6 : 3.4) + slot.phase) + 1) * 0.5;
+      const wave = (Math.sin(this.elapsed * (slot.feedback?.pulseRate ?? (slot.pulse ? 5.6 : 3.4)) + slot.phase) + 1) * 0.5;
       const breath = slot.pulse ? 0.45 + wave * 0.85 : 0.8 + wave * 0.25;
       const fade = t;
 
-      slot.glowMaterial.opacity = GLOW_OPACITY[kind] * breath * fade;
+      // The static action floor survives disabled bloom and a frozen pulse.
+      slot.glowMaterial.opacity = Math.min(1, Math.max(GLOW_OPACITY[kind] * breath, slot.feedback?.auraOpacity ?? 0)) * fade;
       slot.glow.scale.setScalar(0.55 + pop * 0.45);
 
       if (hasMarker) {
