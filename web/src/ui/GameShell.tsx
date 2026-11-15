@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 
 import { audio } from "../audio/audioManager";
 import { GameController } from "../core/gameController";
@@ -8,7 +8,7 @@ import { ARENA_LOOKS, DEFAULT_ARENA, type ArenaTheme } from "../scene/arena";
 import { DEFAULT_ERA, ERAS, type EraId } from "../scene/eras";
 import { detectQualityPreset, type QualityPreset } from "../scene/quality";
 import { readReviewState } from "../scene/reviewState";
-import { SceneEngine, type CameraPreset } from "../scene/sceneEngine";
+import type { CameraPreset, SceneEngine } from "../scene/sceneEngine";
 import { GameOverModal } from "./GameOverModal";
 import { Hud } from "./Hud";
 import { MainMenu, type MatchConfig } from "./MainMenu";
@@ -16,7 +16,8 @@ import { OnlineBridge } from "../net/onlineBridge";
 import type { ConnectionStatus } from "../net/onlineClient";
 import { clearPrivateFragment, readPrivateIntent } from "../net/privateLink";
 import { OnlineLobby, PrivateLinkActions, onlineFailureCopy, type OnlineSession } from "./OnlineLobby";
-import { SettingsPanel, type GameSettings } from "./SettingsPanel";
+import type { GameSettings } from "./SettingsPanel";
+const SettingsPanel = lazy(() => import("./SettingsPanel").then((m) => ({ default: m.SettingsPanel })));
 import { useGameSnapshot } from "./useGameSnapshot";
 import "./medieval.css";
 
@@ -69,6 +70,7 @@ export function GameShell() {
   const [showSettings, setShowSettings] = useState(false);
   const [introPlaying, setIntroPlaying] = useState(false);
   const [capturePlaying, setCapturePlaying] = useState(false);
+  const [hoverSquare, setHoverSquare] = useState<{ square: string; x: number; y: number } | null>(null);
   const [attract, setAttract] = useState(false);
   const [promotionOpen, setPromotionOpen] = useState(false);
   const [fps, setFps] = useState(0);
@@ -108,9 +110,12 @@ export function GameShell() {
       return;
     }
 
-    let engine: SceneEngine;
-    try {
-      engine = new SceneEngine(
+    let cancelled = false;
+    let engine: SceneEngine | null = null;
+    void import("../scene/sceneEngine").then(({ SceneEngine: Engine }) => {
+      if (cancelled) return;
+      try {
+        engine = new Engine(
         canvas,
         controller,
         {
@@ -127,16 +132,17 @@ export function GameShell() {
           onCameraFlipped: (flipped) => setCameraFlipped(flipped),
           onTacticalView: (active) => setTactical(active),
           onCapturePlaying: (playing) => setCapturePlaying(playing),
+          onHoverSquare: (square, x, y) => setHoverSquare(square ? { square, x, y } : null),
         },
         detected,
         eraAtBoot === DEFAULT_ERA ? DEFAULT_ARENA : ERAS[eraAtBoot].arena,
         eraAtBoot,
       );
-    } catch (error) {
-      console.error("[ui] could not start the renderer", error);
-      setUnsupported(true);
-      return;
-    }
+      } catch (error) {
+        console.error("[ui] could not start the renderer", error);
+        setUnsupported(true);
+        return;
+      }
 
     engineRef.current = engine;
     engine.setInteractive(false);
@@ -178,11 +184,13 @@ export function GameShell() {
       setIntroPlaying(false);
     });
 
+    });
     return () => {
+      cancelled = true;
       if (stagedTimer.current) clearTimeout(stagedTimer.current);
       stagedTimer.current = null;
       engineRef.current = null;
-      engine.dispose();
+      engine?.dispose();
     };
   }, [controller, detected, eraAtBoot, review.review, review.fen, review.play, privateEntry]);
 
@@ -301,7 +309,7 @@ export function GameShell() {
       });
       setPhase("playing");
     },
-    [controller, stopAttract],
+    [controller, settings.cinematicIntensity, stopAttract],
   );
 
   /** Tears down the online session. Safe to call when there is none. */
@@ -339,6 +347,7 @@ export function GameShell() {
       engine?.setInteractive(true);
       engine?.setShowcase(false);
       engine?.setCameraPreset(session.color === "b" ? "black" : "white");
+      engine?.setCinematicIntensity(settings.cinematicIntensity === "skip" ? "skip" : "short");
 
       const bridge = new OnlineBridge(session.client, controller, {
         onResync: () => engineRef.current?.resync(),
@@ -658,7 +667,18 @@ export function GameShell() {
           </div>
         ) : null}
 
+        {hoverSquare && phase === "playing" && !cinema ? (
+          <div
+            aria-hidden="true"
+            className="mc-display mc-slate pointer-events-none fixed z-30 -translate-x-1/2 -translate-y-12 px-2 py-0.5 text-xs tracking-[0.2em] text-[#f0dfb6]"
+            style={{ left: hoverSquare.x, top: hoverSquare.y }}
+          >
+            {hoverSquare.square}
+          </div>
+        ) : null}
+
         {showSettings ? (
+          <Suspense fallback={null}>
           <SettingsPanel
             settings={settings}
             autoDetected={detected}
@@ -669,6 +689,7 @@ export function GameShell() {
             onResetQualityAuto={resetQualityAuto}
             onClose={() => setShowSettings(false)}
           />
+          </Suspense>
         ) : null}
 
         {phase === "playing" && !cinema && snapshot.status === "over" && snapshot.result && !snapshot.demo?.autoRematch ? (

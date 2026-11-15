@@ -44,6 +44,7 @@ export interface SceneCallbacks {
   onCameraFlipped?: (flipped: boolean) => void;
   onTacticalView?: (active: boolean) => void;
   onCapturePlaying?: (playing: boolean) => void;
+  onHoverSquare?: (square: SquareId | null, clientX: number, clientY: number) => void;
 }
 
 interface CameraShot {
@@ -3709,6 +3710,8 @@ export class SceneEngine {
     }
 
     this.board.setHover(hoveredSquare);
+    const legalHover = Boolean(this.selected && hoveredSquare !== null && this.legalTargets.has(hoveredSquare));
+    this.callbacks.onHoverSquare?.(legalHover ? hoveredSquare : null, event.clientX, event.clientY);
     this.canvas.style.cursor =
       canTouch || (this.selected && hoveredSquare !== null && this.legalTargets.has(hoveredSquare))
         ? "pointer"

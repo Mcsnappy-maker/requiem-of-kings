@@ -739,11 +739,15 @@ export function gothicRoseWindowTexture(): THREE.CanvasTexture {
   for (let i = 0; i < petals; i += 1) {
     const a1 = (i / petals) * Math.PI * 2;
     const a2 = ((i + 1) / petals) * Math.PI * 2;
+    const grad = ctx.createRadialGradient(cx, cy, radius * 0.2, cx, cy, radius * 0.92);
+    grad.addColorStop(0, "#fff2c6");
+    grad.addColorStop(0.45, colors[i % colors.length]);
+    grad.addColorStop(1, "#160a1e");
     ctx.beginPath();
     ctx.moveTo(cx, cy);
     ctx.arc(cx, cy, radius * 0.92, a1, a2);
     ctx.closePath();
-    ctx.fillStyle = colors[i % colors.length];
+    ctx.fillStyle = grad;
     ctx.fill();
   }
 

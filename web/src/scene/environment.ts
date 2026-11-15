@@ -142,6 +142,20 @@ export class CastleHall {
     dais.position.y = -0.62;
     dais.receiveShadow = true;
     this.group.add(dais);
+
+    // Carved bronze-iron rim framing the dais so portrait phone views read the stone edge.
+    const rimGeo = this.track(new THREE.TorusGeometry(9.45, 0.14, 10, 48));
+    rimGeo.rotateX(Math.PI / 2);
+    const rimMat = this.track(
+      new THREE.MeshStandardMaterial({
+        color: 0x6f5b3a,
+        roughness: 0.52,
+        metalness: 0.65,
+      }),
+    );
+    const rim = new THREE.Mesh(rimGeo, rimMat);
+    rim.position.y = -0.37;
+    this.group.add(rim);
   }
 
   private buildColonnade(): void {
