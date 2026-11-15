@@ -7,6 +7,7 @@ import { QUALITY_SETTINGS, type QualityPreset } from "./quality";
 import { earthSurface, metalSurface, stoneSurface } from "./detail";
 import { clothTexture, mudTexture, smokeTexture, sparkTexture } from "./textures";
 import { DragonFlight } from "./dragonFlight";
+import type { DragonEventReason } from "./battleSpectacle";
 
 /**
  * Everything outside the hall walls: the churned war plain, the two siege
@@ -1008,6 +1009,14 @@ export class Battlefield {
       material.color.setHex(tints[index] ?? tints[0]);
       material.emissiveIntensity = look.troops.emissive;
     });
+  }
+
+  setDragonAmbientLoop(enabled: boolean): void {
+    this.dragon.setAmbientLoop(enabled);
+  }
+
+  triggerDragon(reason: DragonEventReason): boolean {
+    return this.dragon.trigger(this.elapsed, reason);
   }
 
   applyQuality(preset: QualityPreset): void {

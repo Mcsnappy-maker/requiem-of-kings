@@ -68,6 +68,7 @@ export function GameShell() {
   const [progress, setProgress] = useState(0);
   const [showSettings, setShowSettings] = useState(false);
   const [introPlaying, setIntroPlaying] = useState(false);
+  const [capturePlaying, setCapturePlaying] = useState(false);
   const [attract, setAttract] = useState(false);
   const [promotionOpen, setPromotionOpen] = useState(false);
   const [fps, setFps] = useState(0);
@@ -125,6 +126,7 @@ export function GameShell() {
           onContextLost: () => setContextLost(true),
           onCameraFlipped: (flipped) => setCameraFlipped(flipped),
           onTacticalView: (active) => setTactical(active),
+          onCapturePlaying: (playing) => setCapturePlaying(playing),
         },
         detected,
         eraAtBoot === DEFAULT_ERA ? DEFAULT_ARENA : ERAS[eraAtBoot].arena,
@@ -495,6 +497,10 @@ export function GameShell() {
     engineRef.current?.skipIntro();
   }, []);
 
+  const skipCapture = useCallback(() => {
+    engineRef.current?.skipCaptureCinematic();
+  }, []);
+
   return (
     <div
       className="mc-root fixed inset-0 select-none overflow-hidden bg-[#05060a]"
@@ -637,6 +643,19 @@ export function GameShell() {
           >
             <span className="mc-display mc-pulse text-[0.68rem] tracking-[0.4em] text-[#c8ab74]">CLICK TO SKIP</span>
           </button>
+        ) : null}
+
+        {capturePlaying && phase === "playing" && !cinema ? (
+          <div className="pointer-events-none absolute inset-x-0 bottom-5 z-20 flex justify-center">
+            <button
+              type="button"
+              onClick={skipCapture}
+              aria-label="Skip battle moment"
+              className="mc-chip pointer-events-auto min-h-[44px] min-w-[44px] px-4 py-2 text-xs tracking-[0.22em] text-[#f0dfb6]"
+            >
+              TAP TO SKIP
+            </button>
+          </div>
         ) : null}
 
         {showSettings ? (
