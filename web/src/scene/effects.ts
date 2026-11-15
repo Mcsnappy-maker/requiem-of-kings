@@ -1,6 +1,37 @@
 import * as THREE from "three";
 
 import { rng } from "../core/rng";
+import type { Faction } from "../core/types";
+
+export type FactionFeedbackState = "idle" | "hover" | "selected" | "legal" | "hit" | "capture";
+
+export interface FactionFeedback {
+  auraColor: number;
+  emissiveColor: number;
+  emissiveMultiplier: number;
+  auraOpacity: number;
+  auraScale: number;
+  pulseRate: number;
+}
+
+const FEEDBACK_STRENGTH = {
+  idle: { emissiveMultiplier: 0.06, auraOpacity: 0.16, auraScale: 1 },
+  hover: { emissiveMultiplier: 0.28, auraOpacity: 0.4, auraScale: 1.08 },
+  selected: { emissiveMultiplier: 0.62, auraOpacity: 0.68, auraScale: 1.16 },
+  legal: { emissiveMultiplier: 0.42, auraOpacity: 0.56, auraScale: 1.1 },
+  hit: { emissiveMultiplier: 1.55, auraOpacity: 0.98, auraScale: 1.38 },
+  capture: { emissiveMultiplier: 1.25, auraOpacity: 0.94, auraScale: 1.48 },
+} as const;
+
+/** Shared action palette; readable without bloom, particles or a running pulse. */
+export function factionFeedback(faction: Faction, state: FactionFeedbackState): FactionFeedback {
+  return {
+    auraColor: faction === "w" ? 0xffc35a : 0x78e5ff,
+    emissiveColor: faction === "w" ? 0xffa52e : 0xb892ff,
+    pulseRate: faction === "w" ? 2.6 : 1.7,
+    ...FEEDBACK_STRENGTH[state],
+  };
+}
 
 /** Independent streams - see src/core/rng.ts for why these are forked. */
 const burstRng = rng.fork("effects:burst");

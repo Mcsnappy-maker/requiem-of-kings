@@ -3770,7 +3770,7 @@ export class SceneEngine {
     if (!piece) return;
     this.selected = square;
     piece.setSelected(true);
-    this.board.setHighlight(square, "select");
+    this.board.setHighlight(square, "select", false, 0, piece.color);
 
     // Legal squares ripple outward from the piece so the fan of options reads
     // as one motion instead of 20 markers blinking on at once.
@@ -3783,8 +3783,7 @@ export class SceneEngine {
     for (const target of targets) {
       this.legalTargets.set(target.to, target.capture);
       const delay = Math.min(target.distance * 0.02, 0.14);
-      // Colour-coded by move type: red for captures, violet for promotions,
-      // azure for castling, emerald for a quiet advance.
+      // Keep each move type's symbol while the selected army supplies its light.
       const kind: HighlightKind = target.capture
         ? "capture"
         : target.promotion
@@ -3792,7 +3791,7 @@ export class SceneEngine {
           : target.castle
             ? "castle"
             : "move";
-      this.board.setHighlight(target.to, kind, target.capture || target.promotion, delay);
+      this.board.setHighlight(target.to, kind, target.capture || target.promotion, delay, piece.color);
     }
 
     // Everything the piece cannot reach falls into shadow so the lit squares
