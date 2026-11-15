@@ -21,6 +21,7 @@ import { readReviewState } from "./reviewState";
 import { SPELL_LOOK, SpellLightPool, SpellOrb } from "./spells";
 import { disposeStrikeAssets, spawnGroundWave, spawnPillar, spawnSlash } from "./strikes";
 import { readabilityForViewport } from "./mobileReadability";
+import { SafeLighting, readSafeLightingOptions } from "./safeLighting";
 import {
   CaptureMachine,
   ContactLedger,
@@ -453,6 +454,9 @@ export class SceneEngine {
   /** Seeded stream for strike dressing - keeps staged captures reproducible. */
   private readonly strikeRng = rng.fork("scene:engine");
   private blackFrameChecks = 0;
+  private safeLighting: SafeLighting | null = null;
+  /** Wall clock origin for safe lighting: the engine clock clamps slow frames. */
+  private safeLightingStart = 0;
 
   private preset: QualityPreset;
   private arena: ArenaTheme = DEFAULT_ARENA;
@@ -586,6 +590,8 @@ export class SceneEngine {
 
     this.scene.environment = buildEnvironmentMap(this.renderer, look);
     this.scene.environmentIntensity = look.environment.intensity;
+    this.safeLighting = new SafeLighting(this.scene, readSafeLightingOptions(), disposeEnvironment);
+    this.safeLightingStart = performance.now();
 
     this.postfx = new PostFX(this.renderer, this.scene, this.camera);
     this.postfx.setGrade(look.grade);
@@ -1195,6 +1201,7 @@ export class SceneEngine {
         maxBeatMs: Math.round(this.maxBeatMs),
         lastBeatBudgetMs: Math.round(this.lastBeatBudgetMs),
         ply: this.ply,
+        safeLightingStage: this.safeLighting?.currentStage ?? 0,
         frameErrors: this.frameErrors,
         animationTimeouts: this.controller.getAnimationTimeouts(),
       }),
@@ -1327,6 +1334,7 @@ export class SceneEngine {
       if (this.probeFrameTimes.length > 2000) this.probeFrameTimes.shift();
     }
     this.guardAgainstBlackFrames();
+    this.safeLighting?.update((performance.now() - this.safeLightingStart) / 1000, () => this.sampleBoardLuminance());
     this.sampleFps(delta);
   }
 
@@ -1346,6 +1354,40 @@ export class SceneEngine {
     }
     if (this.blackFrameChecks < 2) return;
     this.postfx.forceDirect("composer produced an empty frame");
+  }
+
+  /**
+   * Brightest luminance (0-255) across the empty middle ranks of the board in
+   * the frame just drawn, or null when the board is not usefully on screen.
+   * Healthy hardware shows cream marble here; the broken-PBR phones show black.
+   */
+  private sampleBoardLuminance(): number | null {
+    if (this.introPlaying) return null;
+    const gl = this.renderer.getContext();
+    const { width, height } = this.renderer.domElement;
+    if (width < 16 || height < 16) return null;
+    const files = ["a", "b", "c", "d", "e", "f", "g", "h"];
+    const pixel = new Uint8Array(4);
+    const point = new THREE.Vector3();
+    let samples = 0;
+    let brightest = 0;
+    for (const rank of [3, 4, 5, 6]) {
+      for (const file of files) {
+        point.copy(squareToWorld(`` as SquareId, BOARD_TOP + 0.01)).project(this.camera);
+        if (point.z > 1 || Math.abs(point.x) > 0.95 || Math.abs(point.y) > 0.95) continue;
+        const x = Math.floor((point.x * 0.5 + 0.5) * width);
+        const y = Math.floor((point.y * 0.5 + 0.5) * height);
+        try {
+          gl.readPixels(x, y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+        } catch {
+          return null;
+        }
+        samples += 1;
+        const luma = 0.2126 * pixel[0] + 0.7152 * pixel[1] + 0.0722 * pixel[2];
+        if (luma > brightest) brightest = luma;
+      }
+    }
+    return samples >= 8 ? brightest : null;
   }
 
   private isCentreBlack(): boolean {
@@ -4270,6 +4312,8 @@ export class SceneEngine {
     // The env map was never freed on teardown, only on arena swap.
     disposeEnvironment(this.scene.environment);
     this.scene.environment = null;
+    this.safeLighting?.dispose();
+    this.safeLighting = null;
     this.postfx.dispose();
     this.controls.dispose();
     this.renderer.dispose();
