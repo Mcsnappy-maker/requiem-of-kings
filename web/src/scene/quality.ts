@@ -158,8 +158,7 @@ export function detectQualityPreset(): QualityPreset {
   const weakGpu = /(swiftshader|llvmpipe|software|mali-4|adreno \(tm\) [345]|intel.*hd graphics [2-4])/.test(renderer);
   const strongGpu = /(rtx|radeon rx|apple m[1-9]|geforce gtx 1[06-9]|arc a)/.test(renderer);
 
-  if (weakGpu || cores <= 2 || memory <= 2) return "low";
-  if (isTouch) return cores >= 8 && memory >= 6 ? "medium" : "low";
+  if (weakGpu || isTouch || cores <= 2 || memory <= 2) return "low";
   if (strongGpu && cores >= 8 && memory >= 8) return "ultra";
   if (cores >= 6 && memory >= 4) return "high";
   return "medium";

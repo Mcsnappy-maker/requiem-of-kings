@@ -106,7 +106,10 @@ export function Hud({
 }: HudProps) {
   const [chronicleOpen, setChronicleOpen] = useState(false);
   const [cameraMenuOpen, setCameraMenuOpen] = useState(false);
-  const [compact, setCompact] = useState(() => phoneHudPolicy(window.innerWidth).compact);
+  const computeCompact = (): boolean =>
+    phoneHudPolicy(window.innerWidth).compact ||
+    (window.matchMedia("(pointer: coarse)").matches && window.innerWidth < 768);
+  const [compact, setCompact] = useState(computeCompact);
   const [activePreset, setActivePreset] = useState<CameraPreset>(() =>
     snapshot.mode === "ai" && snapshot.playerColor === "b" ? "black" : "white",
   );
@@ -115,7 +118,7 @@ export function Hud({
 
   useEffect(() => {
     const query = window.matchMedia(`(max-width: ${PHONE_HUD_MAX_WIDTH}px)`);
-    const update = (): void => setCompact(phoneHudPolicy(window.innerWidth).compact);
+    const update = (): void => setCompact(computeCompact());
     update();
     query.addEventListener("change", update);
     return () => query.removeEventListener("change", update);
@@ -285,6 +288,7 @@ export function Hud({
               </IconButton>
             </>
           )}
+          {!compact ? (
           <span className="mc-hud-desktop-actions contents">
           <IconButton title="New game" onClick={onNewGame}>
             <Swords size={16} />
@@ -306,6 +310,7 @@ export function Hud({
             {tactical ? <Box size={16} /> : <LayoutGrid size={16} />}
           </IconButton>
           </span>
+          ) : null}
 
           {/* Camera views live in a dropdown so nothing floats over the board */}
           <div className="relative" ref={cameraMenuRef}>
