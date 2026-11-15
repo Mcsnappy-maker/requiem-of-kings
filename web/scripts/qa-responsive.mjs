@@ -23,7 +23,7 @@ for (const [name, profile] of profiles) {
     if (message.type() === "error") runtimeErrors.push(message.text());
   });
 
-  await page.goto(`${baseUrl}/?review=1&quality=medium`, { waitUntil: "networkidle", timeout: 120_000 });
+  await page.goto(`${baseUrl}/?review=1&quality=medium&probe=1`, { waitUntil: "networkidle", timeout: 120_000 });
   await page.waitForSelector("canvas", { state: "visible", timeout: 120_000 });
   await page.waitForSelector('[data-hud="turn"]', { state: "visible", timeout: 120_000 });
   await page.waitForTimeout(4_000);
@@ -43,6 +43,7 @@ for (const [name, profile] of profiles) {
       horizontalOverflow: document.documentElement.scrollWidth - innerWidth,
       canvas: rect ? [Math.round(rect.width), Math.round(rect.height)] : null,
       webgl: Boolean(gl) && !gl.isContextLost(),
+      battleBounds: window.__kg?.battleBounds?.() ?? null,
       hudWidths: Object.fromEntries(["turn", "primary-actions"].map((region) => [
         region,
         document.querySelector(`[data-hud="${region}"]`)?.getBoundingClientRect().width ?? null,
@@ -69,6 +70,14 @@ for (const [name, profile] of profiles) {
     problems.push(`canvas does not cover viewport (${result.canvas?.join("x") ?? "missing"})`);
   }
   if (result.visibleButtons < 3) problems.push(`only ${result.visibleButtons} visible controls`);
+  const bounds = result.battleBounds;
+  if (!bounds || !bounds.inFront || ![bounds.left, bounds.right, bounds.top, bounds.bottom].every(Number.isFinite)) {
+    problems.push("projected battle bounds missing or behind camera");
+  } else if (bounds.left < 0 || bounds.right > result.viewport[0] || bounds.top < 0 || bounds.bottom > result.viewport[1]) {
+    problems.push(`board or standing armies clipped: ${JSON.stringify(bounds)}`);
+  }
+  if (bounds?.pieces !== 32) problems.push(`initial armies incomplete (${bounds?.pieces ?? "missing"} figures)`);
+  if (bounds?.hallOcclusions !== 0) problems.push(`hall obscures ${bounds?.hallOcclusions ?? "unknown"} figures`);
   if (name === "phone") {
     for (const [region, width] of Object.entries(result.hudWidths)) {
       if (width === null || width > result.viewport[0] * 0.38) {
@@ -80,7 +89,6 @@ for (const [name, profile] of profiles) {
       problems.push(`expected only Undo, Resign, More; got ${result.directActions.join(", ")} / ${result.visibleButtons} total`);
     }
   }
-  if (runtimeErrors.length) problems.push(`runtime errors: ${runtimeErrors.slice(0, 3).join(" | ")}`);
 
   await page.screenshot({
     path: `${outputDir}/${name}.png`,
@@ -106,6 +114,7 @@ for (const [name, profile] of profiles) {
     await page.keyboard.press("Escape");
     if (await menu.count()) problems.push("secondary menu did not dismiss on Escape");
   }
+  if (runtimeErrors.length) problems.push(`runtime errors: ${runtimeErrors.slice(0, 3).join(" | ")}`);
   console.log(`${name}: ${problems.length ? "FAIL" : "PASS"}`, JSON.stringify(result));
   failures.push(...problems.map((problem) => `${name}: ${problem}`));
   await context.close();

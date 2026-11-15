@@ -75,11 +75,18 @@ const DEFAULT_FOV = 46;
 const REF_ASPECT = 16 / 9;
 
 /**
- * Widest vertical lens allowed while recovering a narrow viewport. Past roughly
- * 60 degrees the hall distorts and the figures at the frame edge shear, so any
- * coverage still missing at this point is recovered by dollying back instead.
+ * Landscape lens cap. Portrait can use a wider vertical lens while retaining
+ * a moderate horizontal field of view and staying inside the hall columns.
  */
 const MAX_NARROW_FOV = 60;
+
+/** Full board trim, plus clearance above the 1.12-unit standing king. */
+function battleFrameCorners(): THREE.Vector3[] {
+  const radius = TILE * 4 + 0.84;
+  return [-radius, radius].flatMap((x) => [-radius, radius].flatMap((z) =>
+    [-0.73, 1.5].map((y) => new THREE.Vector3(x, y, z)),
+  ));
+}
 
 const PROMOTION_CHOICES: PieceKind[] = ["q", "r", "b", "n"];
 
@@ -1061,6 +1068,47 @@ export class SceneEngine {
           x: rect.left + ((ndc.x + 1) / 2) * rect.width,
           y: rect.top + ((1 - ndc.y) / 2) * rect.height,
           onScreen: ndc.x >= -1 && ndc.x <= 1 && ndc.y >= -1 && ndc.y <= 1 && ndc.z < 1,
+        };
+      },
+      /** Project the playing surface and live figure geometry, not tile centres. */
+      battleBounds: () => {
+        this.camera.updateMatrixWorld();
+        const rect = this.canvas.getBoundingClientRect();
+        const points: THREE.Vector3[] = [];
+        const edge = TILE * 4;
+        const boxes = [
+          new THREE.Box3(new THREE.Vector3(-edge, BOARD_TOP, -edge), new THREE.Vector3(edge, BOARD_TOP, edge)),
+          ...[...this.pieces.values()].map((piece) => new THREE.Box3().setFromObject(piece.runtime)),
+        ];
+        for (const box of boxes) {
+          for (const x of [box.min.x, box.max.x]) for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z]) {
+            points.push(new THREE.Vector3(x, y, z).project(this.camera));
+          }
+        }
+        const sightline = new THREE.Raycaster();
+        let hallOcclusions = 0;
+        for (const piece of this.pieces.values()) {
+          const centre = new THREE.Box3().setFromObject(piece.runtime).getCenter(new THREE.Vector3());
+          const direction = centre.sub(this.camera.position);
+          sightline.set(this.camera.position, direction.clone().normalize());
+          sightline.far = direction.length() - 0.05;
+          if (sightline.intersectObject(this.hall.group, true).some((hit) => {
+            const mesh = hit.object as THREE.Mesh;
+            if (!mesh.visible || !mesh.isMesh) return false;
+            const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+            return materials.some((material) => !material.transparent || material.opacity >= 0.85);
+          })) {
+            hallOcclusions++;
+          }
+        }
+        return {
+          left: rect.left + (Math.min(...points.map((point) => point.x)) + 1) * rect.width / 2,
+          right: rect.left + (Math.max(...points.map((point) => point.x)) + 1) * rect.width / 2,
+          top: rect.top + (1 - Math.max(...points.map((point) => point.y))) * rect.height / 2,
+          bottom: rect.top + (1 - Math.min(...points.map((point) => point.y))) * rect.height / 2,
+          inFront: points.every((point) => point.z > -1 && point.z < 1),
+          pieces: this.pieces.size,
+          hallOcclusions,
         };
       },
       /**
@@ -3100,7 +3148,11 @@ export class SceneEngine {
     if (!Number.isFinite(aspect) || aspect >= REF_ASPECT) return baseFov;
     const halfV = THREE.MathUtils.degToRad(baseFov) / 2;
     const wanted = 2 * Math.atan((Math.tan(halfV) * REF_ASPECT) / Math.max(aspect, 0.2));
-    return Math.min(Math.max(baseFov, THREE.MathUtils.radToDeg(wanted)), MAX_NARROW_FOV);
+    // Portrait needs a wider vertical lens to fit the board while staying
+    // inside the foreground colonnade. The horizontal lens is still modest
+    // (about 61 degrees on the phone). Landscape keeps its existing cap.
+    const limit = aspect < 1 ? 90 : MAX_NARROW_FOV;
+    return Math.min(Math.max(baseFov, THREE.MathUtils.radToDeg(wanted)), limit);
   }
 
   /**
@@ -3116,7 +3168,23 @@ export class SceneEngine {
     const halfVRef = THREE.MathUtils.degToRad(this.baseFov) / 2;
     const refHalf = Math.min(halfVRef, Math.atan(Math.tan(halfVRef) * REF_ASPECT));
     const scale = Math.tan(refHalf) / Math.tan(effHalf);
-    return Number.isFinite(scale) ? Math.max(1, Math.min(scale, 3)) : 1;
+    const baseline = Number.isFinite(scale) ? Math.max(1, Math.min(scale, 3)) : 1;
+    // Keep landscape and the already-distant tactical map authored as before.
+    if (aspect >= 1 || this.tactical) return baseline;
+
+    // A centre-distance lens ratio misses the perspective expansion of the
+    // near rank. Solve the required distance for every corner of the complete
+    // standing-match envelope in the authored white/black shot's view space.
+    const shot = CAMERA_SHOTS.white;
+    const rotation = new THREE.Matrix4().lookAt(shot.position, shot.target, new THREE.Vector3(0, 1, 0)).invert();
+    const tanV = Math.tan(halfVEff) * 0.95; // 2.5% clear space at each viewport edge.
+    const tanH = tanV * aspect;
+    let distance = 0;
+    for (const corner of battleFrameCorners()) {
+      const point = corner.sub(shot.target).applyMatrix4(rotation);
+      distance = Math.max(distance, point.z + Math.abs(point.x) / tanH, point.z + Math.abs(point.y) / tanV);
+    }
+    return Math.max(baseline, distance / shot.position.distanceTo(shot.target));
   }
 
   /**
