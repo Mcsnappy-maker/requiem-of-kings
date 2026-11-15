@@ -222,6 +222,97 @@
   animation: mc-cam-in 200ms cubic-bezier(0.2, 1.25, 0.35, 1) both;
 }
 
+/* On phones the board owns the centre; three actions occupy one corner. */
+@media (max-width: 639px) {
+  .mc-root .mc-hud-top {
+    padding: max(10px, env(safe-area-inset-top)) 10px 0;
+    gap: 8px;
+  }
+
+  .mc-root [data-hud="turn"] {
+    box-sizing: border-box;
+    width: 38vw;
+    max-width: 148px;
+    min-width: 0;
+    gap: 6px;
+    padding: 8px;
+    flex-wrap: wrap;
+  }
+
+  .mc-root [data-hud="turn"] > div {
+    min-width: 0;
+    flex: 1;
+  }
+
+  .mc-root [data-hud="turn"] p:first-child {
+    font-size: 8px;
+    letter-spacing: 0.1em;
+    color: #c4ad81;
+  }
+
+  .mc-root [data-hud="turn"] p:last-child {
+    font-size: 10px;
+    line-height: 1.5;
+  }
+
+  .mc-root [data-hud="primary-actions"] {
+    width: 144px;
+    flex-shrink: 0;
+    gap: 6px;
+    flex-wrap: nowrap;
+  }
+
+  .mc-root .mc-hud-desktop-actions {
+    display: none;
+  }
+
+  .mc-root .mc-hud-clocks {
+    position: absolute;
+    top: 70px;
+    left: 10px;
+    max-width: 38vw;
+    gap: 6px;
+    padding: 6px;
+  }
+
+  .mc-root .mc-hud-clocks p:first-child {
+    display: none;
+  }
+
+  .mc-root .mc-hud-clocks svg {
+    width: 12px;
+  }
+
+  .mc-root .mc-hud-more-label {
+    font-size: 8px;
+    line-height: 1;
+  }
+
+  .mc-root .mc-icon-btn:has(.mc-hud-more-label) {
+    align-content: center;
+    gap: 1px;
+  }
+
+  .mc-root [data-hud="secondary-actions"] {
+    animation: none;
+    position: fixed;
+    top: calc(max(10px, env(safe-area-inset-top)) + 50px);
+    right: 10px;
+    width: min(240px, calc(100vw - 20px));
+    max-height: calc(100dvh - max(10px, env(safe-area-inset-top)) - 60px - env(safe-area-inset-bottom));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    background: #171715;
+    scrollbar-width: thin;
+    scrollbar-color: #9c7e47 #171715;
+  }
+
+  .mc-root [data-hud="secondary-actions"] .mc-chip {
+    gap: 8px;
+    flex-shrink: 0;
+  }
+}
+
 @keyframes mc-cam-in {
   from {
     opacity: 0;

@@ -166,6 +166,8 @@ Run: `git add web/src/ui/Hud.tsx web/src/ui/mobileHud.ts web/src/ui/medieval.css
 
 ### Task 4: Release Verification and Deployment
 
+Local release preparation verified on 2026-11-15 at implementation commit `11f7b07`. The controller owns push, merge, deployment and production verification after final review; those steps remain pending. Earlier task checkboxes are left to their implementation records rather than reconstructed as test-first claims.
+
 **Files:**
 - Modify: `ASSET_REGISTER.md`
 - Modify: `docs/superpowers/plans/2026-11-15-stage-one-visual-rebuild.md` (check completed steps)
@@ -173,19 +175,25 @@ Run: `git add web/src/ui/Hud.tsx web/src/ui/mobileHud.ts web/src/ui/medieval.css
 **Interfaces:**
 - No new runtime interface; this task verifies the complete stage.
 
-- [ ] **Step 1: Record the original procedural dragon and environment work**
+- [x] **Step 1: Record the original procedural dragon and environment work**
 
 Add an entry explaining that the dragon silhouette and throne-temple extensions are original procedural geometry using project-owned code and existing textures, with no new third-party asset licence.
 
-- [ ] **Step 2: Run the complete web verification suite**
+- [x] **Step 2: Run the complete web verification suite**
 
 Run: `cd web && npm test && npm run build`
 
 Expected: every unit and browser test passes; Vite exits zero.
 
-- [ ] **Step 3: Run the legacy relay/worker suites documented by their package scripts**
+Verified locally: 254 unit tests across 11 files and 14 browser tests across 2 files passed; production build exited zero. Existing Vite native-config and large-chunk warnings remain.
+
+- [x] **Step 3: Run the legacy relay/worker suites documented by their package scripts**
 
 Run the repository's existing multiplayer test commands from the relevant package directories and require zero failures before deployment.
+
+Verified actual commands from package scripts and `.github/workflows/verify.yml`: `npm test --prefix multiplayer` (121 tests across 5 files), `npm run typecheck --prefix multiplayer`, and `node server/e2e-multiplayer.mjs` (37/37 checks). The legacy `server/package.json` has no test script; the relay command is documented by the test itself and CI. Also passed `npx --prefix multiplayer wrangler deploy --dry-run --config multiplayer/wrangler.jsonc --env=""` without deploying.
+
+Visually inspected the existing `web/qa-shots/stage-one-fix-round-1/phone.png`, `tablet.png` and `desktop.png`: full playable board and both armies are visible with no HUD overlap; phone shows the current-turn identity and exactly Undo, Resign and More. The accompanying QA log reports live WebGL, zero overflow, 32 figures and zero hall occlusions on all three profiles; phone controls are at least 44px. Generated QA images are excluded from the release-record commit.
 
 - [ ] **Step 4: Push all commits to `origin/main` and deploy the repository root to the existing `requiem-of-kings` Vercel project**
 

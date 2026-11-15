@@ -6,6 +6,7 @@ import {
   Flag,
   LayoutGrid,
   Maximize,
+  MoreHorizontal,
   Pause,
   Play,
   Repeat,
@@ -25,6 +26,7 @@ import { ARENA_LOOKS, ARENA_ORDER, type ArenaTheme } from "../scene/arena";
 import type { CameraPreset } from "../scene/sceneEngine";
 import { Crest, Hourglass, pieceGlyph } from "./Heraldry";
 import { MoveLedger } from "./MoveLedger";
+import { PHONE_HUD_MAX_WIDTH, phoneHudPolicy } from "./mobileHud";
 
 interface HudProps {
   snapshot: GameSnapshot;
@@ -104,11 +106,20 @@ export function Hud({
 }: HudProps) {
   const [chronicleOpen, setChronicleOpen] = useState(false);
   const [cameraMenuOpen, setCameraMenuOpen] = useState(false);
+  const [compact, setCompact] = useState(() => phoneHudPolicy(window.innerWidth).compact);
   const [activePreset, setActivePreset] = useState<CameraPreset>(() =>
     snapshot.mode === "ai" && snapshot.playerColor === "b" ? "black" : "white",
   );
   const cameraMenuRef = useRef<HTMLDivElement | null>(null);
   const chronicleRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const query = window.matchMedia(`(max-width: ${PHONE_HUD_MAX_WIDTH}px)`);
+    const update = (): void => setCompact(phoneHudPolicy(window.innerWidth).compact);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
 
   // Dismiss the camera menu on outside taps / Escape without laying an
   // invisible backdrop over the board (that would eat the next board click).
@@ -205,8 +216,8 @@ export function Hud({
   return (
     <>
       {/* Top bar */}
-      <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-3 p-3 sm:p-4">
-        <div className="mc-slate mc-goldleaf pointer-events-auto flex items-center gap-3 px-3 py-2.5">
+      <div className="mc-hud-top pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between gap-3 p-3 sm:p-4" data-compact={compact}>
+        <div data-hud="turn" className="mc-slate mc-goldleaf pointer-events-auto flex items-center gap-3 px-3 py-2.5">
           <Crest faction={snapshot.turn} size={26} active />
           <div>
             <p className="mc-display text-[0.58rem] tracking-[0.3em] text-[#a89268]">
@@ -224,8 +235,8 @@ export function Hud({
                 : snapshot.thinking
                   ? "Thinking…"
                   : snapshot.turn === "w"
-                    ? "The Ember Court"
-                    : "The Hollow Legion"}
+                    ? (compact ? "Ember Court" : "The Ember Court")
+                    : (compact ? "Hollow Legion" : "The Hollow Legion")}
             </p>
           </div>
           {snapshot.inCheck && snapshot.status === "playing" ? (
@@ -238,9 +249,9 @@ export function Hud({
           ) : null}
         </div>
 
-        <div className="pointer-events-auto flex flex-wrap items-center justify-end gap-1.5">
+        <div data-hud="primary-actions" className="pointer-events-auto flex flex-wrap items-center justify-end gap-1.5">
           {snapshot.clock.enabled ? (
-            <div className="mc-slate flex items-center gap-3 px-3 py-1.5">
+            <div className="mc-hud-clocks mc-slate flex items-center gap-3 px-3 py-1.5">
               <ClockFace
                 ms={snapshot.clock.whiteMs}
                 initial={snapshot.clock.initialMs}
@@ -257,20 +268,21 @@ export function Hud({
             </div>
           ) : null}
 
-          {demo ? (
+          {demo && !compact ? (
             <IconButton title="Hide the interface for recording (C)" onClick={onToggleCinema}>
               <EyeOff size={16} />
             </IconButton>
           ) : (
             <>
-              <IconButton title="Undo" onClick={onUndo} disabled={!snapshot.canUndo}>
+              <IconButton title="Undo" onClick={onUndo} disabled={Boolean(demo) || !snapshot.canUndo}>
                 <RotateCcw size={16} />
               </IconButton>
-              <IconButton title="Resign" onClick={onResign} disabled={snapshot.status !== "playing"} danger>
+              <IconButton title="Resign" onClick={onResign} disabled={Boolean(demo) || snapshot.status !== "playing"} danger>
                 <Flag size={16} />
               </IconButton>
             </>
           )}
+          <span className="mc-hud-desktop-actions contents">
           <IconButton title="New game" onClick={onNewGame}>
             <Swords size={16} />
           </IconButton>
@@ -290,18 +302,43 @@ export function Hud({
           >
             {tactical ? <Box size={16} /> : <LayoutGrid size={16} />}
           </IconButton>
+          </span>
 
           {/* Camera views live in a dropdown so nothing floats over the board */}
           <div className="relative" ref={cameraMenuRef}>
             <IconButton
-              title="Camera views"
+              title={compact ? "More" : "Camera views"}
               onClick={() => setCameraMenuOpen((open) => !open)}
               active={cameraMenuOpen}
+              expanded={cameraMenuOpen}
+              controls="battle-secondary-actions"
             >
-              <Video size={16} />
+              {compact ? (
+                <><MoreHorizontal size={17} /><span className="mc-hud-more-label">More</span></>
+              ) : <Video size={16} />}
             </IconButton>
             {cameraMenuOpen ? (
-              <div className="mc-cam-menu mc-slate absolute right-0 top-[calc(100%+0.4rem)] z-30 w-44 p-2">
+              <div id="battle-secondary-actions" data-hud="secondary-actions" className="mc-cam-menu mc-slate absolute right-0 top-[calc(100%+0.4rem)] z-30 w-44 p-2">
+                {compact ? (
+                  <>
+                    <p className="mc-display px-1 pb-1.5 text-[0.52rem] tracking-[0.3em] text-[#a89268]">Battle</p>
+                    <div className="flex flex-col gap-1">
+                      <button type="button" className="mc-chip" onClick={() => { setCameraMenuOpen(false); onNewGame(); }}>New game</button>
+                      <button type="button" className="mc-chip" onClick={onToggleSound}>{muted ? <VolumeX size={14} /> : <Volume2 size={14} />} {muted ? "Unmute" : "Mute"}</button>
+                      <button type="button" className="mc-chip" onClick={onFullscreen}><Maximize size={14} /> Fullscreen</button>
+                      <button type="button" className="mc-chip" onClick={() => { setCameraMenuOpen(false); onSettings(); }}><SettingsIcon size={14} /> Settings</button>
+                      <button type="button" className="mc-chip" onClick={() => { setCameraMenuOpen(false); setChronicleOpen((open) => !open); }}><ScrollText size={14} /> Chronicle</button>
+                      {demo ? <>
+                        <button type="button" className="mc-chip" onClick={onTogglePause}>{snapshot.paused ? "Resume showcase" : "Pause showcase"}</button>
+                        {DEMO_SPEEDS.map((option) => <button key={option.label} type="button" className="mc-chip" data-active={demo.speed === option.value} onClick={() => onDemoSpeed(option.value)}>Speed {option.label}</button>)}
+                        <button type="button" className="mc-chip" aria-pressed={demo.autoRematch} onClick={() => onDemoLoop(!demo.autoRematch)}>Loop {demo.autoRematch ? "on" : "off"}</button>
+                        <button type="button" className="mc-chip" onClick={onDemoRestart}>New duel</button>
+                        <button type="button" className="mc-chip" onClick={onToggleCinema}>Hide interface</button>
+                      </> : null}
+                    </div>
+                    <div className="mc-rule my-2 opacity-60" />
+                  </>
+                ) : null}
                 <p className="mc-display px-1 pb-1.5 text-[0.52rem] tracking-[0.3em] text-[#a89268]">Camera</p>
                 <div className="flex flex-col gap-1">
                   {CAMERA_BUTTONS.map((button) => (
@@ -369,9 +406,11 @@ export function Hud({
             ) : null}
           </div>
 
-          <IconButton title="Settings" onClick={onSettings}>
-            <SettingsIcon size={16} />
-          </IconButton>
+          <span className="mc-hud-desktop-actions contents">
+            <IconButton title="Settings" onClick={onSettings}>
+              <SettingsIcon size={16} />
+            </IconButton>
+          </span>
         </div>
       </div>
 
@@ -395,7 +434,7 @@ export function Hud({
 
         <button
           type="button"
-          className="mc-chronicle-fab pointer-events-auto"
+          className="mc-chronicle-fab mc-hud-desktop-actions pointer-events-auto"
           data-open={chronicleOpen || undefined}
           onClick={() => setChronicleOpen((open) => !open)}
           title={chronicleOpen ? "Close the chronicle (H)" : "Chronicle — move record (H)"}
@@ -414,7 +453,7 @@ export function Hud({
       {/* Showcase transport — small, centred at the foot of the screen so it
           never covers a rank of the board. */}
       {demo ? (
-        <div className="mc-demo-bar pointer-events-auto">
+        <div className="mc-demo-bar mc-hud-desktop-actions pointer-events-auto">
           <button
             type="button"
             className="mc-demo-play"
@@ -530,6 +569,8 @@ function IconButton({
   disabled,
   danger,
   active,
+  expanded,
+  controls,
 }: {
   children: React.ReactNode;
   title: string;
@@ -537,12 +578,16 @@ function IconButton({
   disabled?: boolean;
   danger?: boolean;
   active?: boolean;
+  expanded?: boolean;
+  controls?: string;
 }) {
   return (
     <button
       type="button"
       title={title}
       aria-label={title}
+      aria-expanded={expanded}
+      aria-controls={controls}
       onClick={onClick}
       disabled={disabled}
       data-active={active ? "true" : undefined}

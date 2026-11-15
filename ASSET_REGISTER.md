@@ -27,6 +27,8 @@ All assets incorporated into REQUIEM OF KINGS conform to open-source, permissive
 | Sengoku Roster (`p, n, b, r, q, k`) | glTF / GLB Binary | Local repository assets (rigged + idle/attack/death/walk clips) | MIT / Project Baseline | `public/models/sengoku/` |
 | New Kingdom Egypt Roster (`p, n, b, r, q, k`) | glTF / GLB Binary | Local repository assets (rigged + idle/attack/death/walk clips) | MIT / Project Baseline | `public/models/egypt/` |
 | Core Rigged Heroes (Ember Court & Hollow Legion) | glTF / GLB Binary | Procedural/AI-sculpted character models with standard humanoid rigs | MIT Baseline | `src/assets/generated.ts` |
+| Stage One dragon silhouette | Runtime Three.js geometry | Original procedural body, head, tail, wings and ember details built with project-owned code | Project-owned procedural work; no new third-party asset licence | `web/src/scene/dragonFlight.ts` |
+| Stage One throne-temple extensions | Runtime Three.js geometry and existing procedural textures | Original broken crown arches, torn faction banners and magical beacons built with project-owned code using the existing cloth/scene texture generators | Project-owned procedural work and existing project textures; no new third-party asset licence | `web/src/scene/battlefield.ts`, `web/src/scene/textures.ts` |
 
 ---
 

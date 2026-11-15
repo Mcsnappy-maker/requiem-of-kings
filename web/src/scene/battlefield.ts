@@ -6,6 +6,7 @@ import { ARENA_LOOKS, DEFAULT_ARENA } from "./arena";
 import { QUALITY_SETTINGS, type QualityPreset } from "./quality";
 import { earthSurface, metalSurface, stoneSurface } from "./detail";
 import { clothTexture, mudTexture, smokeTexture, sparkTexture } from "./textures";
+import { DragonFlight } from "./dragonFlight";
 
 /**
  * Everything outside the hall walls: the churned war plain, the two siege
@@ -81,6 +82,7 @@ function dressProp(
 
 export class Battlefield {
   readonly group = new THREE.Group();
+  private readonly dragon = new DragonFlight();
 
   /** Theme-driven handles: sky gradient, ground, fires and drifting particles. */
   private skyUniforms: { zenith: { value: THREE.Color }; horizon: { value: THREE.Color }; ember: { value: THREE.Color } } | null =
@@ -96,6 +98,7 @@ export class Battlefield {
   private fireScale = 1;
   private speckOpacity = 0.85;
   private crowMaterial: THREE.MeshBasicMaterial | null = null;
+  private ruinMaterial: THREE.MeshStandardMaterial | null = null;
   /** Siege engines are hidden on maps where a trebuchet makes no sense. */
   private siegeProps: THREE.Object3D[] = [];
   private showSiege = true;
@@ -138,6 +141,8 @@ export class Battlefield {
     this.buildSmoke();
     this.buildAsh();
     this.buildCrows();
+    this.buildCrownRuins();
+    this.group.add(this.dragon.group);
 
     this.applyQuality(quality);
     this.applyArena(look);
@@ -370,8 +375,8 @@ export class Battlefield {
     poleGeo.dispose();
 
     const sides: { sign: number; cloth: THREE.CanvasTexture; tint: number; banner: number }[] = [
-      { sign: 1, cloth: this.track(clothTexture("#4a4438", "#2f4a86")), tint: 0xb9b0a0, banner: 0x2f4a86 },
-      { sign: -1, cloth: this.track(clothTexture("#3a3229", "#7a2320")), tint: 0x8a8076, banner: 0x8c2a24 },
+      { sign: 1, cloth: this.track(clothTexture("#492b2b", "#991f32")), tint: 0xc9ada0, banner: 0x991f32 },
+      { sign: -1, cloth: this.track(clothTexture("#302c44", "#583a91")), tint: 0xaaa4ca, banner: 0x583a91 },
     ];
 
     for (const side of sides) {
@@ -423,10 +428,20 @@ export class Battlefield {
 
     const clothGeo = this.track(new THREE.PlaneGeometry(1.7, 2.6, 8, 10));
     clothGeo.translate(0.85, 0, 0);
+    // Uneven lower hem and missing triangles make actual tears in the silhouette.
+    const vertices = clothGeo.getAttribute("position") as THREE.BufferAttribute;
+    for (let column = 0; column <= 8; column++) {
+      const index = 10 * 9 + column;
+      vertices.setY(index, vertices.getY(index) + (column % 3 === 0 ? 0.5 : 0.08));
+    }
+    const indices = Array.from(clothGeo.index!.array);
+    clothGeo.setIndex(indices.filter((_, index) => ![155, 157, 159].includes(Math.floor(index / 3))));
+    clothGeo.computeVertexNormals();
     const time = { value: 0 };
     const material = this.track(
       new THREE.MeshStandardMaterial({
         color,
+        map: this.track(clothTexture("#b8aaa0", "#77675c")),
         roughness: 0.92,
         metalness: 0,
         side: THREE.DoubleSide,
@@ -448,11 +463,57 @@ export class Battlefield {
     this.windUniforms.push(time);
 
     const banner = new THREE.Mesh(clothGeo, material);
+    banner.name = "torn-faction-banner";
     banner.position.set(x, ground + 4.7, z);
     banner.rotation.y = this.rng() * Math.PI;
     banner.castShadow = true;
     this.props.push(banner);
     this.group.add(banner);
+  }
+
+  /** Broken crown-shaped portals frame the breached sides without covering the board. */
+  private buildCrownRuins(): void {
+    const material = this.track(dressProp(new THREE.MeshStandardMaterial({
+      color: 0x4e4840, roughness: 0.96,
+    }), stoneSurface(), 0.65));
+    this.ruinMaterial = material;
+    const fragments: THREE.BufferGeometry[] = [];
+    for (const side of [-1, 1]) {
+      for (const z of [-7, 7]) {
+        const portal = new THREE.Matrix4().makeRotationY(Math.PI / 2);
+        portal.setPosition(side * 19, -0.6, z);
+        const add = (geometry: THREE.BufferGeometry, x: number, y: number, depth = 0): void => {
+          geometry.translate(x, y, depth);
+          geometry.applyMatrix4(portal);
+          fragments.push(geometry);
+        };
+        add(new THREE.BoxGeometry(1.25, 6.4, 1.4), -2.6, 3.2);
+        add(new THREE.BoxGeometry(1.4, 6.1, 1.5), 2.6, 3.05);
+        // Split the crown at its apex, leaving the missing keystone open to the sky.
+        const left = new THREE.TorusGeometry(2.6, 0.43, 5, 9, 1.12);
+        left.rotateZ(1.85);
+        add(left, 0, 6.1);
+        const right = new THREE.TorusGeometry(2.6, 0.43, 5, 7, 0.92);
+        right.rotateZ(0.1);
+        add(right, 0, 6.1);
+        for (const tooth of [-1, 1]) {
+          const crown = new THREE.ConeGeometry(0.48, tooth < 0 ? 1.65 : 1.1, 4);
+          crown.rotateZ(-tooth * 0.22);
+          add(crown, tooth * 2.1, tooth < 0 ? 8.7 : 8.5);
+        }
+        const fallen = new THREE.BoxGeometry(1.2, 0.8, 2.1);
+        fallen.rotateY(0.55 * side);
+        add(fallen, 1.5, 0.4, 1.9);
+      }
+      this.addBanner(side * 18.6, side * 4.2, side > 0 ? 0x991f32 : 0x583a91);
+    }
+    const geometry = this.track(mergeGeometries(fragments, false)!);
+    fragments.forEach((fragment) => fragment.dispose());
+    const ruins = new THREE.Mesh(geometry, material);
+    ruins.name = "shattered-crown-arches";
+    ruins.castShadow = true;
+    ruins.receiveShadow = true;
+    this.group.add(ruins);
   }
 
   // --------------------------------------------------------- siege machines
@@ -652,12 +713,14 @@ export class Battlefield {
 
     const spots: [number, number][] = [
       [0.75, 25],
-      [2.5, 27.5],
       [3.85, 26],
+      [2.5, 27.5],
       [5.55, 29],
     ];
 
     spots.forEach(([angle, radius], index) => {
+      // The first two lights stay opposed even on the Medium preset.
+      const flameColor = index % 2 === 0 ? 0xff8a2c : 0x8a71ff;
       const x = Math.cos(angle) * radius;
       const z = Math.sin(angle) * radius;
       const y = terrainHeight(x, z) - 0.7;
@@ -677,17 +740,18 @@ export class Battlefield {
       }
 
       const flameMat = this.track(
-        new THREE.MeshBasicMaterial({ color: 0xff8a2c, transparent: true, opacity: 0.92, fog: false }),
+        new THREE.MeshBasicMaterial({ color: flameColor, transparent: true, opacity: 0.92, fog: false }),
       );
       this.pyreFlameMaterials.push(flameMat);
       const flame = new THREE.Mesh(flameGeo, flameMat);
+      flame.name = "faction-beacon";
       flame.position.set(x, y + 1.1, z);
       this.group.add(flame);
 
       const glowMat = this.track(
         new THREE.MeshBasicMaterial({
           map: glowMap,
-          color: 0xff8632,
+          color: flameColor,
           transparent: true,
           opacity: 0.4,
           blending: THREE.AdditiveBlending,
@@ -702,7 +766,7 @@ export class Battlefield {
       this.glows.push(glow);
       this.group.add(glow);
 
-      const light = new THREE.PointLight(0xff7a26, 34, 26, 2);
+      const light = new THREE.PointLight(flameColor, 34, 26, 2);
       light.position.set(x, y + 1.8, z);
       this.group.add(light);
 
@@ -916,6 +980,7 @@ export class Battlefield {
     }
     for (const material of this.ridgeMaterials) material.color.setRGB(...look.ridge);
     this.plainMaterial?.color.setHex(look.ground);
+    this.ruinMaterial?.color.setHex(look.stone.pillar);
 
     this.fireScale = look.fire;
     for (const flame of this.pyreFlameMaterials) flame.opacity = 0.92 * Math.max(0.4, look.fire);
@@ -947,6 +1012,7 @@ export class Battlefield {
 
   applyQuality(preset: QualityPreset): void {
     const settings = QUALITY_SETTINGS[preset];
+    this.dragon.setQuality(preset);
 
     for (const mesh of this.troops) {
       mesh.count = Math.min(MAX_TROOPS, settings.troopCount);
@@ -994,6 +1060,7 @@ export class Battlefield {
 
   update(delta: number, camera: THREE.Camera): void {
     this.elapsed += delta;
+    this.dragon.update(this.elapsed);
 
     for (const uniform of this.windUniforms) uniform.value = this.elapsed;
 
@@ -1076,6 +1143,7 @@ export class Battlefield {
   }
 
   dispose(): void {
+    this.dragon.dispose();
     for (const mesh of [...this.troops, this.crowMesh]) mesh?.dispose();
     for (const points of [this.ash, this.smoke, this.torchSpecks]) points?.geometry.dispose();
     for (const item of this.disposables) item.dispose();
