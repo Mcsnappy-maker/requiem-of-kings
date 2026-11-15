@@ -182,6 +182,7 @@ export function Hud({
   };
 
   const demo = snapshot.demo;
+  const lastMove = snapshot.moves.length > 0 ? snapshot.moves[snapshot.moves.length - 1] : null;
   const whiteTaken = snapshot.captured.filter((piece) => piece.color === "b");
   const blackTaken = snapshot.captured.filter((piece) => piece.color === "w");
   const diff = snapshot.materialDiff;
@@ -227,7 +228,9 @@ export function Hud({
                   ? "Battle ended"
                   : snapshot.thinking
                     ? "Council of war"
-                    : "To move"}
+                    : lastMove
+                      ? `To move · ${lastMove.san}`
+                      : "To move"}
             </p>
             <p className="mc-display text-sm text-[#f2e2bd]">
               {snapshot.status === "over"
