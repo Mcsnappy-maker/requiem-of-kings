@@ -56,6 +56,9 @@ type GeometrySet = Record<Surface, THREE.BufferGeometry>;
 // never dispose these: a captured pawn can share its buffers with seven others.
 const geometryCache = new Map<string, GeometrySet>();
 const up = new THREE.Vector3(0, 1, 0);
+const moteGeometry = new THREE.BufferGeometry().setAttribute("position", new THREE.Float32BufferAttribute([
+  -0.2, 0.78, 0.15, 0.19, 0.87, 0.08, -0.1, 1.1, -0.02, 0.13, 0.55, 0.18,
+], 3));
 
 function geometryFor(descriptor: RegaliaDescriptor): GeometrySet {
   const cached = geometryCache.get(descriptor.style);
@@ -210,9 +213,11 @@ export class FactionRegalia {
   readonly meshes: THREE.Mesh[] = [];
   readonly materials: THREE.Material[] = [];
   private readonly glow: THREE.MeshStandardMaterial;
+  private readonly accents: THREE.Mesh;
+  private readonly motes: THREE.Points | null;
   private disposed = false;
 
-  constructor(private readonly descriptor: RegaliaDescriptor, figureHeight: number) {
+  constructor(private readonly descriptor: RegaliaDescriptor, figureHeight: number, secondaryMotes = true) {
     this.group.name = "faction-regalia";
     this.group.userData = { faction: descriptor.faction, kind: descriptor.kind, style: descriptor.style };
     this.group.scale.setScalar(figureHeight);
@@ -238,9 +243,23 @@ export class FactionRegalia {
       mesh.name = `regalia-${surface}`;
       // These rigid adornments are smaller than the shadow silhouette threshold.
       mesh.castShadow = false;
+      mesh.userData.shadowEligible = false;
       this.materials.push(material);
       this.meshes.push(mesh);
       this.group.add(mesh);
+    }
+    this.accents = this.meshes[2];
+    this.motes = null;
+    if (secondaryMotes) {
+      const material = new THREE.PointsMaterial({
+        color: descriptor.accent, size: 0.018, transparent: true, opacity: 1,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      });
+      this.motes = new THREE.Points(moteGeometry, material);
+      this.motes.name = "regalia-motes";
+      this.motes.raycast = () => {};
+      this.materials.push(material);
+      this.group.add(this.motes);
     }
   }
 
@@ -251,8 +270,15 @@ export class FactionRegalia {
     this.group.visible = opacity > 0;
     const pulse = Math.sin(elapsed * (this.descriptor.aura === "coals" ? 2.6 : 1.7));
     this.glow.emissiveIntensity = (0.85 + pulse * 0.15 + (selected ? 0.95 : hovered ? 0.4 : 0)) * opacity;
+    // Only cold light drifts; forged plates, crowns and cloth stay rigid.
+    this.accents.position.y = this.descriptor.aura === "witchlight" ? pulse * 0.012 : 0;
+    if (this.motes) {
+      this.motes.rotation.y = elapsed * (this.descriptor.aura === "coals" ? 0.18 : -0.24);
+      this.motes.position.y = pulse * 0.025;
+    }
     for (const material of this.materials) {
-      const transparent = opacity < 1;
+      const mote = (material as THREE.PointsMaterial).isPointsMaterial;
+      const transparent = mote || opacity < 1;
       if (material.transparent !== transparent) {
         material.transparent = transparent;
         material.needsUpdate = true;
@@ -271,6 +297,6 @@ export class FactionRegalia {
   }
 }
 
-export function buildFactionRegalia(faction: Faction, kind: PieceKind, figureHeight: number): FactionRegalia {
-  return new FactionRegalia(regaliaDescriptor(faction, kind), figureHeight);
+export function buildFactionRegalia(faction: Faction, kind: PieceKind, figureHeight: number, secondaryMotes = true): FactionRegalia {
+  return new FactionRegalia(regaliaDescriptor(faction, kind), figureHeight, secondaryMotes);
 }

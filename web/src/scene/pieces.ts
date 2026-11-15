@@ -16,6 +16,7 @@ import { radialTexture } from "./textures";
 import { wearSurface } from "./detail";
 import { Ease, type TweenManager } from "./tween";
 import { attachWeapons, type AttachedArms } from "./weapons";
+import { buildFactionRegalia, type FactionRegalia } from "./factionRegalia";
 
 /**
  * Minimum WORLD-space radius for a rigid sub-mesh of a figure to be worth a
@@ -306,9 +307,13 @@ export class PieceView {
   private readonly collider: THREE.Mesh;
 
   private arms: AttachedArms | null = null;
+  private readonly regalia: FactionRegalia;
+  private readonly figureHeight: number;
+  private elapsed = 0;
+  private disposed = false;
   private readonly majestic: boolean;
 
-  /** Every mesh of the sculpt and its arms — shadows are pulled while burning. */
+  /** Every mesh of the sculpt, arms and regalia — shadows are pulled while burning. */
   private meshes: THREE.Mesh[] = [];
   /** 0 solid → 1 fully scattered. Drives the burn-away shader. */
   private dissolveAmount = 0;
@@ -413,6 +418,22 @@ export class PieceView {
       this.meshes.push(mesh);
     });
 
+    // The model is already normalized by PieceFactory. Adornments live in
+    // board units under runtime, outside the sculpt's authored-unit transform.
+    this.figureHeight = Math.max(1e-3, unit * Math.abs(model.scale.y));
+    this.regalia = buildFactionRegalia(color, kind, this.figureHeight, options.idleAnimation !== false);
+    this.runtime.add(this.regalia.group);
+    const regaliaDissolve = {
+      ...this.dissolveUniforms,
+      uDissolveScale: { value: 10 },
+      uDissolveSpan: { value: new THREE.Vector2(0, 1) },
+    };
+    for (const mesh of this.regalia.meshes) {
+      mesh.userData.piece = this;
+      installDissolve(mesh.material as THREE.MeshStandardMaterial, regaliaDissolve, 0.85);
+    }
+    this.meshes.push(...this.regalia.meshes);
+
     const accent = FACTION_ACCENT[color];
     const glowMaterial = new THREE.MeshBasicMaterial({
       map: sharedGlowTexture(),
@@ -498,6 +519,7 @@ export class PieceView {
     this.flat = enabled;
     if (enabled && !this.token) this.buildToken();
     this.visual.visible = !enabled;
+    this.syncRegaliaPose();
     if (this.shadow) this.shadow.visible = !enabled;
     if (this.badge) this.badge.visible = !enabled && this.badgeWanted && !this.slain;
     if (this.token) this.token.visible = enabled;
@@ -866,6 +888,7 @@ export class PieceView {
     this.runtime.rotation.set(0, 0, 0);
     this.container.scale.setScalar(1);
     this.visual.quaternion.copy(this.homeFacing);
+    this.syncRegaliaPose();
     if (!this.mixer) return;
     for (const action of this.actions.values()) action.stop();
     this.activeOneShot = null;
@@ -911,6 +934,7 @@ export class PieceView {
   setSquash(amount: number): void {
     const value = THREE.MathUtils.clamp(amount, -0.6, 1) * 0.15;
     this.visual.scale.set(1 + value * 0.6, 1 - value, 1 + value * 0.6);
+    this.syncRegaliaPose();
   }
 
   /** Flares the team aura disc under the figure — the moment it takes a square. */
@@ -981,9 +1005,11 @@ export class PieceView {
       easing: Ease.inOutCubic,
       onUpdate: (t) => {
         this.visual.quaternion.slerpQuaternions(from, to, t);
+        this.syncRegaliaPose();
       },
     });
     this.visual.quaternion.copy(to);
+    this.syncRegaliaPose();
   }
 
   /**
@@ -997,6 +1023,7 @@ export class PieceView {
     const wasSolid = this.dissolveAmount <= 0.02;
     this.dissolveAmount = value;
     this.dissolveUniforms.uDissolve.value = value;
+    this.updateRegalia();
     // A shadow map knows nothing about the burn, so a half-eaten body would
     // keep casting a whole one. Drop the cast the moment it starts to go.
     const solid = value <= 0.02;
@@ -1015,6 +1042,7 @@ export class PieceView {
 
   setOpacity(value: number): void {
     this.fade = value;
+    this.updateRegalia();
     for (const material of this.materials) {
       material.transparent = value < 1;
       material.opacity = value;
@@ -1043,10 +1071,14 @@ export class PieceView {
   setFacing(forward: THREE.Vector3, remember = true): void {
     const quaternion = orientationCorrection(forward);
     this.visual.quaternion.copy(quaternion);
+    this.syncRegaliaPose();
     if (remember) this.homeFacing.copy(quaternion);
   }
 
   update(delta: number, elapsed: number): void {
+    if (this.disposed) return;
+    this.elapsed = elapsed;
+    this.updateRegalia();
     this.hit = Math.max(0, this.hit - delta * 2.4);
     this.aura = Math.max(0, this.aura - delta * 1.8);
 
@@ -1149,7 +1181,26 @@ export class PieceView {
     glowMaterial.opacity = Math.max(0, glowMaterial.opacity - delta * 0.6);
   }
 
+  private syncRegaliaPose(): void {
+    this.regalia.group.quaternion.copy(this.visual.quaternion);
+    this.regalia.group.scale.copy(this.visual.scale).multiplyScalar(this.figureHeight);
+    this.regalia.group.visible = !this.flat && this.fade > 0 && this.dissolveAmount < 1;
+  }
+
+  private updateRegalia(): void {
+    this.regalia.update(this.elapsed, !this.slain && this.selected, !this.slain && this.hovered, this.fade);
+    // Loose motes use a basic material, so fade them with the burn instead of
+    // the lit surfaces' noise shader.
+    for (const material of this.regalia.materials) {
+      if (material instanceof THREE.PointsMaterial) material.opacity *= 1 - this.dissolveAmount;
+    }
+    this.syncRegaliaPose();
+  }
+
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.regalia.dispose();
     if (this.mixer) {
       this.mixer.stopAllAction();
       this.mixer.uncacheRoot(this.mixer.getRoot() as THREE.Object3D);
@@ -1260,9 +1311,8 @@ function applyFactionLook(
   ownLivery: boolean,
 ): void {
   if (ownLivery && material.map) {
-    // The sculpt was painted for this army — feathers, jade and gold would be
-    // destroyed by a flat tint, so only the surface response is touched.
-    material.color.setHex(0xffffff);
+    // A restrained glaze keeps painted albedo and surface detail readable.
+    material.color.multiply(new THREE.Color(color === "w" ? 0xffe7cf : 0xe5deff));
     material.roughness = Math.min(0.85, material.roughness * 0.9 + 0.18);
     // Metals are binary. The old clamp forced every painted piece into
     // 0.08-0.4, which is physically neither metal nor dielectric and is why
@@ -1276,16 +1326,14 @@ function applyFactionLook(
     return;
   }
   if (color === "w") {
-    material.color.setHex(0x2d2f36);
-    material.roughness = 0.36;
-    // Carved bone/ivory is a dielectric, not a 0.1 metal blend.
-    material.metalness = 0.92;
+    material.color.multiply(new THREE.Color(material.map ? 0xffc6a0 : 0x9b6358));
+    material.roughness = 0.48;
+    material.metalness = material.map ? material.metalness : 0.72;
     material.emissive = new THREE.Color(0x5a1804);
   } else {
-    material.color.setHex(0x181a22);
-    material.roughness = 0.44;
-    // Blackened forged steel: a real metal, so 1 rather than the 0.55 blend.
-    material.metalness = 0.85;
+    material.color.multiply(new THREE.Color(material.map ? 0xd9d2ff : 0xbdc5d4));
+    material.roughness = 0.62;
+    material.metalness = material.map ? material.metalness : 0.18;
     material.emissive = new THREE.Color(0x350d52);
   }
   material.emissiveIntensity = 0.05;
